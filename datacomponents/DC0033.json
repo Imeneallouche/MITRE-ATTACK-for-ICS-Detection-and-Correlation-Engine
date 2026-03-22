@@ -1,0 +1,152 @@
+{
+    "id": "DC0033",
+    "name": "Process Termination",
+    "type": "DataComponent",
+    "description": "The exit or termination of a running process on a system. This can occur due to normal operations, user-initiated commands, or malicious actions such as process termination by malware to disable security controls.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit"
+        ],
+        "indicator_types": [
+            "string",
+            "integer"
+        ],
+        "categories": [
+            "process_execution",
+            "defense_evasion",
+            "service_monitoring"
+        ],
+        "fields": [
+            "ProcessName",
+            "ProcessId",
+            "ParentProcessId",
+            "ExitStatus",
+            "User",
+            "EventID",
+            "Service"
+        ],
+        "keywords": [
+            "4689",
+            "7036",
+            "sysmon event 5",
+            "auditd",
+            "exit_group",
+            "kill syscall",
+            "ebpf",
+            "osquery",
+            "service control manager"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4689",
+                    "source": "Security",
+                    "description": "Process Termination; captures when a process exits, including process ID and parent process."
+                },
+                {
+                    "event_id": "7036",
+                    "source": "System (Service Control Manager)",
+                    "description": "Monitors system service stops."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "5",
+                    "description": "Process Termination; detects when a process exits, including parent-child relationships."
+                }
+            ]
+        },
+        "linux_macos": {
+            "audit_framework": {
+                "tool": "AuditD",
+                "syscalls": [
+                    "execve",
+                    "exit_group",
+                    "kill"
+                ],
+                "description": "Captures process termination via command-line interactions."
+            },
+            "low_level_monitoring": {
+                "technologies": [
+                    "eBPF",
+                    "XDP"
+                ],
+                "description": "Monitors low-level system calls related to process termination."
+            },
+            "query_tools": {
+                "tool": "OSQuery",
+                "table": "processes",
+                "description": "Can be queried for abnormal exits."
+            }
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Monitor process termination events.",
+                "Detect malicious termination of security controls."
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "exit_group"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Process segfault or abnormal termination after invoking vulnerable syscall sequence"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "kill syscalls targeting logging/security processes"
+        },
+        {
+            "Name": "docker:runtime",
+            "Channel": "Termination of monitoring sidecar or security container"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Log entries indicating VM powered off or forcibly terminated"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "unexpected termination of syslog or rsyslog processes"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Unexpected termination of daemons or critical services not aligned with admin change tickets"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "process_termination: Unexpected termination of processes tied to vulnerable or high-value services"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Terminal process killed (killall Terminal) immediately after sudoers modification"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process.*exit.*code"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Termination of syspolicyd or XProtect processes"
+        },
+        {
+            "Name": "Process",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "EventCode=5"
+        }
+    ]
+}

@@ -1,0 +1,100 @@
+{
+    "id": "DC0110",
+    "name": "Asset Inventory",
+    "type": "DataComponent",
+    "description": "This includes sources of current and expected devices on the network, including the manufacturer, model, and necessary identifiers (e.g., IP and hardware addresses). This data serves as the foundational 'source of truth' for security operations, allowing analysts to correlate IP addresses to specific physical or virtual devices and identify unauthorized (rogue) hardware.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "network",
+            "cloud",
+            "iot"
+        ],
+        "log_source_types": [
+            "cmdb",
+            "scanner",
+            "dhcp",
+            "infrastructure"
+        ],
+        "indicator_types": [
+            "ip",
+            "mac_address",
+            "hostname",
+            "serial_number"
+        ],
+        "categories": [
+            "asset_management",
+            "discovery",
+            "compliance"
+        ],
+        "fields": [
+            "HostName",
+            "IPAddress",
+            "MacAddress",
+            "OperatingSystem",
+            "Manufacturer",
+            "Model",
+            "SerialNumber",
+            "Location"
+        ],
+        "keywords": [
+            "cmdb",
+            "nmap",
+            "dhcp lease",
+            "arp table",
+            "wmi systemenclosure",
+            "aws ec2 describe-instances",
+            "qualys",
+            "nessus"
+        ]
+    },
+    "collection_measures": {
+        "network_discovery": {
+            "active_scanning": {
+                "tools": [
+                    "Nmap",
+                    "Nessus",
+                    "Qualys"
+                ],
+                "description": " actively probes IP ranges to identify live hosts, open ports, and OS fingerprints."
+            },
+            "passive_monitoring": {
+                "sources": [
+                    "DHCP Logs (IP lease assignments)",
+                    "Passive DNS (Hostname resolution)",
+                    "ARP Tables (Router/Switch MAC-to-IP mappings)"
+                ],
+                "description": "Detects devices as they communicate on the network without active probing."
+            }
+        },
+        "endpoint_management": {
+            "agents": {
+                "tools": [
+                    "SCCM (Microsoft Endpoint Configuration Manager)",
+                    "Tanium",
+                    "Jamf"
+                ],
+                "description": "Agents installed on managed devices that report detailed hardware specs (Model, Serial, RAM) and installed software."
+            },
+            "wmi_queries": {
+                "command": "Get-CimInstance -ClassName Win32_ComputerSystem",
+                "description": "Local query to retrieve Manufacturer and Model information on Windows."
+            }
+        },
+        "cloud_inventory": {
+            "apis": {
+                "aws": "ec2 describe-instances",
+                "azure": "Get-AzVM",
+                "gcp": "gcloud compute instances list"
+            },
+            "description": "API calls that return the current inventory of virtual machines and their metadata (Instance ID, Type, Region)."
+        }
+    },
+    "log_sources": [
+        {
+            "name": "Asset",
+            "channel": "None"
+        }
+    ]
+}

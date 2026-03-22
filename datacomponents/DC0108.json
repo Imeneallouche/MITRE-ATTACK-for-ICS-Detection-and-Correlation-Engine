@@ -1,0 +1,129 @@
+{
+    "id": "DC0108",
+    "name": "Device Alarm",
+    "type": "DataComponent",
+    "description": "This includes alarms associated with unexpected device functions, such as shutdowns, restarts, hardware failures, or critical configuration changes. These events often indicate system instability, denial-of-service attacks, or an adversary attempting to clear volatile memory (RAM) or apply low-level persistence mechanisms.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "network",
+            "hardware"
+        ],
+        "log_source_types": [
+            "event_log",
+            "syslog",
+            "snmp",
+            "health_check"
+        ],
+        "indicator_types": [
+            "host",
+            "ip",
+            "error_code"
+        ],
+        "categories": [
+            "availability",
+            "system_health",
+            "impact",
+            "configuration_change"
+        ],
+        "fields": [
+            "EventID",
+            "SystemTime",
+            "ShutdownType",
+            "BugCheckCode",
+            "Message",
+            "Severity",
+            "HostName"
+        ],
+        "keywords": [
+            "41",
+            "1074",
+            "6005",
+            "6006",
+            "reboot",
+            "shutdown",
+            "bugcheck",
+            "bsod",
+            "kernel panic",
+            "snmp trap",
+            "power failure"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "shutdown_restart_events": [
+                {
+                    "event_id": "41",
+                    "source": "Kernel-Power",
+                    "description": "The system has rebooted without cleanly shutting down first (unexpected power loss or crash)."
+                },
+                {
+                    "event_id": "1074",
+                    "source": "User32",
+                    "description": "System shutdown/restart initiated by a user or process (includes reason codes)."
+                },
+                {
+                    "event_id": "6005",
+                    "source": "EventLog",
+                    "description": "The Event log service was started (indicates system startup)."
+                },
+                {
+                    "event_id": "6006",
+                    "source": "EventLog",
+                    "description": "The Event log service was stopped (indicates system shutdown)."
+                }
+            ],
+            "failure_events": [
+                {
+                    "event_id": "1001",
+                    "source": "BugCheck",
+                    "description": "The computer has rebooted from a bugcheck (BSOD)."
+                }
+            ]
+        },
+        "linux": {
+            "system_logs": [
+                {
+                    "file": "/var/log/syslog",
+                    "keywords": [
+                        "reboot",
+                        "shutdown",
+                        "segfault",
+                        "kernel panic"
+                    ]
+                },
+                {
+                    "file": "/var/log/kern.log",
+                    "description": "Kernel logs capturing hardware failures and critical system errors."
+                }
+            ],
+            "commands": [
+                {
+                    "command": "last -x",
+                    "description": "Shows system shutdown and runlevel changes."
+                },
+                {
+                    "command": "dmesg",
+                    "description": "Prints the message buffer of the kernel (useful for boot-time hardware errors)."
+                }
+            ]
+        },
+        "network_hardware": {
+            "snmp": {
+                "protocol": "SNMP Traps",
+                "description": "Alarms sent by network devices for critical events (Link Down, Fan Failure, Power Supply Failure, High Temperature)."
+            },
+            "syslog": {
+                "severity": "Emergency (0) to Error (3)",
+                "description": "Capture critical severity logs from routers, switches, and firewalls regarding device health."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "name": "Operational Databases",
+            "channel": "None"
+        }
+    ]
+}

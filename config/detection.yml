@@ -1,0 +1,39 @@
+engine:
+  polling_interval_seconds: 5
+  batch_size: 500
+  checkpoint_file: "./state/engine_checkpoint.json"
+  dedup_cache_size: 50000
+  late_event_seconds: 600
+  suppress_window_seconds: 60
+
+thresholds:
+  candidate_threshold: 0.40
+  alert_threshold: 0.50
+  high_confidence_threshold: 0.75
+  unknown_asset_penalty: 0.10
+
+correlation:
+  window_seconds: 300
+  repeat_count_escalation: 5
+  max_correlation_boost: 0.15
+  per_event_correlation_boost: 0.05
+  chain_step_boost: 0.10
+
+scoring_weights:
+  log_source_match: 0.35
+  keyword_match: 0.25
+  field_match: 0.20
+  category_match: 0.10
+  channel_match: 0.10
+
+elasticsearch:
+  hosts:
+    - "http://localhost:9200"
+  source_index_pattern: "ics-*"
+  alert_index_pattern: "ics-alerts-%Y.%m.%d"
+  correlation_index_pattern: "ics-correlations-%Y.%m.%d"
+  timeout_seconds: 30
+
+paths:
+  datacomponents_dir: "./datacomponents"
+  assets_file: "./assets.json"

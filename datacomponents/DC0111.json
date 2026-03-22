@@ -1,0 +1,123 @@
+{
+    "id": "DC0111",
+    "name": "Software",
+    "type": "DataComponent",
+    "description": "This includes sources of current and expected software or application programs deployed to a device, along with information on the version and patch level for vendor products, full source code for any application programs, and unique identifiers (e.g., hashes, signatures). This component is critical for vulnerability management, license compliance, and detecting unauthorized software.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "cloud"
+        ],
+        "log_source_types": [
+            "cmdb",
+            "package_manager",
+            "vulnerability_scanner",
+            "code_repository"
+        ],
+        "indicator_types": [
+            "hash",
+            "product_name",
+            "version"
+        ],
+        "categories": [
+            "asset_management",
+            "vulnerability_management",
+            "supply_chain",
+            "compliance"
+        ],
+        "fields": [
+            "DisplayName",
+            "DisplayVersion",
+            "Publisher",
+            "InstallDate",
+            "InstallLocation",
+            "Checksum",
+            "SignatureStatus",
+            "CommitHash"
+        ],
+        "keywords": [
+            "uninstall registry",
+            "rpm -qa",
+            "dpkg -l",
+            "wmic product",
+            "git log",
+            "sbom",
+            "cpe"
+        ]
+    },
+    "collection_measures": {
+        "endpoint_inventory": {
+            "windows": {
+                "registry_keys": [
+                    "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+                    "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
+                ],
+                "commands": [
+                    "Get-ItemProperty HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*",
+                    "wmic product get name, version, vendor"
+                ],
+                "description": "Queries the Windows Registry or WMI to list installed applications and their versions."
+            },
+            "linux": {
+                "package_managers": [
+                    {
+                        "tool": "RPM",
+                        "command": "rpm -qa --last",
+                        "description": "Lists all installed RPM packages and install times."
+                    },
+                    {
+                        "tool": "DPKG",
+                        "command": "dpkg -l",
+                        "description": "Lists all installed Debian packages and versions."
+                    }
+                ]
+            },
+            "macos": {
+                "profiler": {
+                    "command": "system_profiler SPApplicationsDataType",
+                    "description": "Lists all installed applications, versions, and verified code signatures."
+                }
+            }
+        },
+        "code_repositories": {
+            "scm_tools": {
+                "tools": [
+                    "Git",
+                    "SVN",
+                    "Perforce"
+                ],
+                "artifacts": [
+                    "Source Code",
+                    "Commit History",
+                    "Tags (Versions)"
+                ],
+                "description": "Tracks the 'full source code' and version history for internal application programs."
+            }
+        },
+        "integrity_and_security": {
+            "vulnerability_scanners": {
+                "tools": [
+                    "Nessus",
+                    "Qualys",
+                    "OpenVAS"
+                ],
+                "description": "Scans endpoints to enumerate software versions and correlate them with known CVEs (Patch Level)."
+            },
+            "signature_verification": {
+                "tools": [
+                    "Sigcheck (Sysinternals)",
+                    "codesign (macOS)"
+                ],
+                "description": "Verifies the digital signature and hash of installed executables."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "name": "Asset",
+            "channel": "None"
+        }
+    ]
+}

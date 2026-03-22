@@ -1,0 +1,504 @@
+{
+    "id": "DC0082",
+    "name": "Network Connection Creation",
+    "type": "DataComponent",
+    "description": "The initial establishment of a network session, where a system or process initiates a connection to a local or remote endpoint. This typically involves capturing socket information (source/destination IP, ports, protocol) and tracking session metadata. Monitoring these events helps detect lateral movement, exfiltration, and command-and-control (C2) activities.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "cloud",
+            "network"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit",
+            "network_flow",
+            "cloud_audit"
+        ],
+        "indicator_types": [
+            "ip",
+            "port",
+            "string"
+        ],
+        "categories": [
+            "network_connection",
+            "lateral_movement",
+            "command_and_control",
+            "exfiltration"
+        ],
+        "fields": [
+            "SourceIp",
+            "DestinationIp",
+            "SourcePort",
+            "DestinationPort",
+            "Protocol",
+            "ProcessName",
+            "User",
+            "BytesTransferred",
+            "Duration"
+        ],
+        "keywords": [
+            "5156",
+            "sysmon event 3",
+            "iptables",
+            "nftables",
+            "auditd",
+            "connect syscall",
+            "zeek",
+            "conn.log",
+            "vpc flow logs",
+            "nsg flow logs",
+            "suricata"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "5156",
+                    "source": "Windows Filtering Platform",
+                    "description": "Logs network connections permitted by Windows Filtering Platform (WFP)."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "3",
+                    "description": "Captures process, source/destination IP, ports, and parent process."
+                }
+            ]
+        },
+        "linux_macos": {
+            "firewall_logs": [
+                "Netfilter (iptables)",
+                "nftables logs"
+            ],
+            "audit_framework": {
+                "tool": "AuditD",
+                "syscall": "connect",
+                "description": "Logs TCP, UDP, and ICMP connections."
+            },
+            "network_analysis_tools": {
+                "tool": "Zeek",
+                "log_file": "conn.log",
+                "fields": [
+                    "protocol",
+                    "duration",
+                    "bytes transferred"
+                ]
+            }
+        },
+        "cloud_network_infrastructure": {
+            "flow_logs": [
+                {
+                    "platform": "AWS",
+                    "log_source": "VPC Flow Logs"
+                },
+                {
+                    "platform": "Azure",
+                    "log_source": "NSG Flow Logs"
+                }
+            ],
+            "network_security_monitoring": [
+                {
+                    "tool": "Zeek",
+                    "source": "conn.log"
+                },
+                {
+                    "tool": "Suricata",
+                    "source": "network events",
+                    "description": "Captures packet metadata for detection and correlation."
+                }
+            ]
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Detect anomalous network activity such as new C2 connections or data exfiltration attempts."
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "connect"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execs of chromium, google-chrome, firefox, libreoffice with http(s) in cmdline"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "connect/sendto"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open or connect syscalls on /tmp/ssh-* or $SSH_AUTH_SOCK"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "socket/connect with TLS context by unexpected process"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "socket/bind: New bind() to a previously closed port shortly after the sequence."
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "sendto/connect"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "outbound connections"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "socket/bind: Process binds to a new local port shortly after knock"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "socket/connect calls showing SSH processes forwarding arbitrary ports"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "openat,connect -k discovery"
+        },
+        {
+            "Name": "AWS:VPCFlowLogs",
+            "Channel": "Outbound connection to 169.254.169.254 from EC2 workload"
+        },
+        {
+            "Name": "AWS:VPCFlowLogs",
+            "Channel": "Large transfer volume (&gt;20MB) from RDS IP range to external public IPs"
+        },
+        {
+            "Name": "AWS:VPCFlowLogs",
+            "Channel": "High outbound traffic from new region resource"
+        },
+        {
+            "Name": "AWS:VPCFlowLogs",
+            "Channel": "Outbound connections to port 22, 3389"
+        },
+        {
+            "Name": "AWS:VPCFlowLogs",
+            "Channel": "Traffic observed on mirror destination instance"
+        },
+        {
+            "Name": "cni:netflow",
+            "Channel": "outbound connection to internal or external APIs"
+        },
+        {
+            "Name": "ebpf:syscalls",
+            "Channel": "socket connect"
+        },
+        {
+            "Name": "esxi:esxupdate",
+            "Channel": "/var/log/esxupdate.log or /var/log/vmksummary.log"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "System service interactions"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Service initiated connections"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Service-Based Network Connection"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "protocol egress"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "network activity"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "None"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "network session initiation with external HTTPS services"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "family=AF_PACKET or protocol raw; process name not in allowlist."
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "network"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "postfix/smtpd"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "New Wi-Fi connection established or repeated association failures"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "None"
+        },
+        {
+            "Name": "linux:Sysmon",
+            "Channel": "EventCode=3, 22"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "ES_EVENT_TYPE_NOTIFY_CONNECT"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "process_events/socket_events"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "execution of trusted tools interacting with external endpoints"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "launchd or network_events"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "process_events + launchd"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "process_events, socket_events"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "CONNECT: Long-lived connections from remote-control parents to external IPs/domains"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "None"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "connection attempts"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "connection open"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "network connection events"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "First outbound connection from the same PID/user shortly after an inbound trigger."
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "network sessions initiated by remote desktop apps"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Inbound connections to VNC/SSH ports"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "network"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Outbound Traffic"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "None"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "networkd or socket"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream network activity"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Association and authentication events including failures and new SSIDs"
+        },
+        {
+            "Name": "Network Traffic",
+            "Channel": "None"
+        },
+        {
+            "Name": "networkdevice:Flow",
+            "Channel": "Traffic from mirrored interface to mirror target IP"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Dynamic route changes"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "web domain alerts"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "New outbound connection from Safari/Chrome/Firefox/Word"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "Outbound connections from newly spawned child processes or from the browser to uncommon endpoints or on\n                anomalous ports"
+        },
+        {
+            "Name": "NSM:Firewall",
+            "Channel": "Outbound Connections"
+        },
+        {
+            "Name": "NSM:Firewall",
+            "Channel": "proxy or TLS inspection logs"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "New TCP/443 or TCP/80 to domain not previously seen for the user/host"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "conn.log"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Outbound connection to *.tunnels.api.visualstudio.com or *.devtunnels.ms"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Connections to *.devtunnels.ms or tunnels.api.visualstudio.com"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "HTTPs connection to tunnels.api.visualstudio.com"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Outbound or inbound TFTP file transfers of ROMMON or firmware binaries"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "connection: TCP connections to ports 139/445 to multiple hosts"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "connection: SMB connections to multiple internal hosts"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Outbound HTTP/S initiated by newly installed interpreter process"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "outbound connections to RMM services or to unusual destination ports"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Multiple failed\n                connections (conn_state=REJ/S0 or history has 'R') across distinct ports\n                from the same src_ip followed by success to a specific port."
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Sequence of REJ/S0 then SF success from same src_ip within TimeWindow."
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Series of denied/closed flows to distinct ports then success to mgmt port from same src_ip within\n                TimeWindow."
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Outbound traffic spike through formerly blocked ports/subnets following config change"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "New egress to Internet by the same UID/host shortly after terminal exec"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "connection: Inbound connections to SSH or VPN ports"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "External access to container ports (2375, 6443)"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "remote access"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Outbound Connections"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "connection attempts"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "High-volume or repeated SNMP GETBULK/GETNEXT queries from untrusted or external IPs"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "outbound connections from host during or immediately after image build"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "new outbound connection from browser/office lineage"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "new outbound connection from exploited lineage"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Multiple failed\n                connections to closed ports (history contains 'R' or conn_state in {REJ,\n                S0}) followed by a successful handshake to a new port from same src\n                within TimeWindowKnock"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Closed-port hits followed by success from same src_ip"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Port-knock pattern from one src to device unicast,broadcast,network addresses on same port within\n                TimeWindowKnock"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Unexpected inbound/outbound TFTP traffic for device image files"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "Unexpected or unauthorized inbound connections to SNMP, NETCONF, or RESTCONF services"
+        },
+        {
+            "Name": "snmp:access",
+            "Channel": "GETBULK/GETNEXT requests for OIDs associated with configuration parameters"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-Bits-Client/Operational",
+            "Channel": "BITS job lifecycle events such as job create/modify/transfer/complete and URL/remote name fields"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-WLAN-AutoConfig",
+            "Channel": "EventCode=8001, 8002, 8003"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=5156, 5157"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "EventCode=3, 22"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=8001"
+        }
+    ]
+}

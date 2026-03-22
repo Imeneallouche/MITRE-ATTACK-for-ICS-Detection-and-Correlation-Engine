@@ -1,0 +1,80 @@
+{
+    "id": "DC0045",
+    "name": "Windows Registry Key Deletion",
+    "type": "DataComponent",
+    "description": "The removal of a registry key within the Windows operating system. Adversaries often delete registry keys to clean up configuration changes, remove persistence mechanisms (after a job is done), or hide evidence of intrusion.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint"
+        ],
+        "indicator_types": [
+            "registry_key",
+            "user",
+            "process"
+        ],
+        "categories": [
+            "registry",
+            "defense_evasion",
+            "persistence"
+        ],
+        "fields": [
+            "TargetObject",
+            "EventID",
+            "ProcessName",
+            "User",
+            "HandleId",
+            "Image"
+        ],
+        "keywords": [
+            "4660",
+            "4658",
+            "sysmon event 12",
+            "sysmon event 13",
+            "reg delete",
+            "registry key",
+            "registry value"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4660",
+                    "source": "Security",
+                    "description": "Object Deleted; logs when a registry key is deleted."
+                },
+                {
+                    "event_id": "4658",
+                    "source": "Security",
+                    "description": "Registry Key Handle Closed; captures when a handle to a registry key is closed (often required to correlate with 4660 to identify the specific object)."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "12",
+                    "description": "Registry Key Deleted; logs when a registry key is removed."
+                },
+                {
+                    "event_id": "13",
+                    "description": "Registry Value Deleted; captures removal of specific registry values."
+                }
+            ],
+            "endpoint_detection_response": {
+                "capabilities": [
+                    "Monitor registry deletions for suspicious behavior.",
+                    "Correlate deletions with process execution history."
+                ]
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "name": "Windows Registry",
+            "channel": "None"
+        }
+    ]
+}

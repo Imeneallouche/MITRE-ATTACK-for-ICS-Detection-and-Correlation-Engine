@@ -1,0 +1,289 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════════════════════
+# GRFICS ICS DataComponent Detection Stack
+# ════════════════════════════════════════════════════════════════════════════
+# Before first run:
+#   chmod +x init_shared_logs.sh && ./init_shared_logs.sh
+# ════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── ICS Simulation Layer ─────────────────────────────────────────────────
+
+  simulation:
+    image: fortiphyd/grfics-simulation
+    container_name: simulation
+    hostname: simulation
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "55555"]
+      interval: 5s
+      retries: 5
+    volumes:
+      # EXPORT: System logs for DC0033/DC0034 (process), DC0016 (module load)
+      - ./shared_logs/simulation/syslog:/var/log/syslog
+      - ./shared_logs/simulation/auth.log:/var/log/auth.log
+      - ./shared_logs/simulation/kern.log:/var/log/kern.log
+      # EXPORT: Process alarm / sensor data for DC0109 (Process/Event Alarm)
+      - ./shared_logs/simulation/process_alarms:/var/log/grfics/alarms
+    networks:
+      a-grfics-admin: {}
+      b-ics-net:
+        ipv4_address: 192.168.95.10
+
+  plc:
+    image: fortiphyd/grfics-plc
+    container_name: plc
+    hostname: plc
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8080:8080"
+    volumes:
+      - plc_volume:/docker_persistent
+      # EXPORT: Auth events for DC0067/DC0088 (Logon Session)
+      - ./shared_logs/plc/auth.log:/var/log/auth.log
+      # EXPORT: System/daemon logs for DC0033 (Process Termination)
+      - ./shared_logs/plc/syslog:/var/log/syslog
+      - ./shared_logs/plc/daemon.log:/var/log/daemon.log
+      # EXPORT: Audit logs for DC0021/DC0032/DC0033/DC0034 (Process/API)
+      - ./shared_logs/plc/audit:/var/log/audit
+      # EXPORT: PLC-specific application logs for DC0109 (Process Alarm)
+      - ./shared_logs/plc/plc_app:/var/log/plc
+      # EXPORT: Kernel log for DC0016 (Module Load)
+      - ./shared_logs/plc/kern.log:/var/log/kern.log
+    networks:
+      a-grfics-admin: {}
+      b-ics-net:
+        ipv4_address: 192.168.95.2
+
+  ews:
+    image: fortiphyd/grfics-workstation
+    container_name: ews
+    hostname: ews
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "6080:6080"
+    volumes:
+      # EXPORT: Auth events for DC0067/DC0088 (Logon Session)
+      - ./shared_logs/ews/auth.log:/var/log/auth.log
+      # EXPORT: Syslog for DC0033/DC0034/DC0016 (Process/Module)
+      - ./shared_logs/ews/syslog:/var/log/syslog
+      - ./shared_logs/ews/daemon.log:/var/log/daemon.log
+      # EXPORT: Auditd for DC0021/DC0032/DC0033/DC0034/DC0039/DC0040/DC0055/DC0059/DC0061
+      - ./shared_logs/ews/audit:/var/log/audit
+      # EXPORT: Kernel log for DC0016 (Module Load), DC0004 (Firmware)
+      - ./shared_logs/ews/kern.log:/var/log/kern.log
+      # EXPORT: Login history for DC0067 (utmp/wtmp are binary; auth.log is preferred)
+      - ./shared_logs/ews/wtmp:/var/log/wtmp
+      # EXPORT: Process accounting for DC0107 (Process History/Live Data)
+      - ./shared_logs/ews/pacct:/var/log/pacct
+      # EXPORT: Cron for persistence monitoring
+      - ./shared_logs/ews/cron.log:/var/log/cron.log
+    networks:
+      a-grfics-admin: {}
+      b-ics-net:
+        ipv4_address: 192.168.95.5
+
+  hmi:
+    image: fortiphyd/grfics-scadalts
+    container_name: hmi
+    hostname: hmi
+    dns:
+      - 8.8.8.8
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "6081:8080"
+    volumes:
+      - scadalts_db:/var/lib/mysql
+      # EXPORT: ScadaLTS / Tomcat application logs for DC0109 (Process/Event Alarm)
+      - ./shared_logs/hmi/catalina:/usr/local/tomcat/logs
+      # EXPORT: Auth events for DC0067/DC0088
+      - ./shared_logs/hmi/auth.log:/var/log/auth.log
+      # EXPORT: Syslog
+      - ./shared_logs/hmi/syslog:/var/log/syslog
+      # EXPORT: Audit logs
+      - ./shared_logs/hmi/audit:/var/log/audit
+    networks:
+      a-grfics-admin: {}
+      c-dmz-net:
+        ipv4_address: 192.168.90.107
+
+  kali:
+    # ── Attacker node – NOT part of ICS site; for offensive simulation only
+    image: fortiphyd/grfics-attacker
+    container_name: kali
+    hostname: kali
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "6088:6080"
+    sysctls:
+      net.ipv4.conf.default.arp_announce: 2
+      net.ipv4.conf.all.arp_announce: 2
+    networks:
+      a-grfics-admin: {}
+      c-dmz-net:
+        ipv4_address: 192.168.90.6
+
+  router:
+    image: fortiphyd/grfics-router
+    container_name: router
+    hostname: router
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      FWUI_SECRET_KEY: "some-long-secret-you-generate"
+    volumes:
+      - router_config:/etc/firewall
+      # EXPORT: Suricata IDS logs for DC0078/DC0082/DC0085 (Network Traffic)
+      - ./shared_logs/router:/var/log/suricata
+      # EXPORT: Router syslog for DC0016 (firmware/module), DC0004 (firmware mod)
+      - ./shared_logs/router/syslog:/var/log/syslog
+    healthcheck:
+      test: ["CMD", "bash", "-c", "ip route | grep -q 192.168.95.0 || exit 1"]
+      interval: 5s
+      retries: 5
+    networks:
+      a-grfics-admin: {}
+      b-ics-net:
+        ipv4_address: 192.168.95.200
+      c-dmz-net:
+        ipv4_address: 192.168.90.200
+
+  caldera:
+    # ── C2 framework – for offensive simulation only
+    image: fortiphyd/grfics-caldera
+    container_name: caldera
+    hostname: caldera
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    networks:
+      a-grfics-admin: {}
+      c-dmz-net:
+        ipv4_address: 192.168.90.250
+
+  # ── AI Data Collection Layer ──────────────────────────────────────────────
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.security.enabled=false
+      - xpack.ml.enabled=false
+      # ILM: auto-create index templates on startup
+      - action.auto_create_index=ics-*,auditd-*,syslog-*,linux-*,plc-*,hmi-*,scada-*
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - a-grfics-admin
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.0
+    container_name: logstash
+    volumes:
+      # Pipeline conf files (ordered by filename prefix)
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      # Config files (logstash.yml, pipelines.yml, ES template, MITRE mapping dict)
+      - ./logstash/config:/usr/share/logstash/config:ro
+      # MITRE DC dictionary files for translate filter
+      - ./logstash/mitre_mapping:/usr/share/logstash/mitre_mapping:ro
+    ports:
+      - "5044:5044"   # Beats input
+      - "5000:5000/udp"  # Syslog UDP
+      - "5001:5001"   # JSON/TCP structured input
+      - "9600:9600"   # Logstash monitoring API
+    networks:
+      - a-grfics-admin
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      LS_JAVA_OPTS: "-Xmx512m -Xms512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:9600/?pretty || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    networks:
+      - a-grfics-admin
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.13.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # ── Shared log directories (read from all ICS containers) ───────────
+      - ./shared_logs:/shared_logs:ro
+      # ── Docker container stdout/stderr (for containers not writing files) ─
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # ── Asset inventory for enrichment ──────────────────────────────────
+      - ./assets.json:/data/assets.json:ro
+    depends_on:
+      logstash:
+        condition: service_healthy
+    networks:
+      - a-grfics-admin
+    command: filebeat -e -strict.perms=false
+    restart: unless-stopped
+
+# ── Networks ─────────────────────────────────────────────────────────────────
+
+networks:
+  a-grfics-admin:
+    driver: bridge
+  b-ics-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.95.0/24
+          gateway: 192.168.95.1
+  c-dmz-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.90.0/24
+          gateway: 192.168.90.1
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+
+volumes:
+  scadalts_db:
+  plc_volume:
+  router_config:
+  elasticsearch_data:

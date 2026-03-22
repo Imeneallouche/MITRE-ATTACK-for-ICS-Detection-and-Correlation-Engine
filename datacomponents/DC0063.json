@@ -1,0 +1,116 @@
+{
+    "id": "DC0063",
+    "name": "Windows Registry Key Modification",
+    "type": "DataComponent",
+    "description": "Changes made to an existing registry key or its values. These modifications can include altering permissions, modifying stored data, or updating configuration settings. Adversaries frequently modify the registry to establish persistence (e.g., Run keys), disable security controls (e.g., turning off Windows Defender), or enable remote access mechanisms.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint"
+        ],
+        "indicator_types": [
+            "registry_key",
+            "registry_value",
+            "process",
+            "user"
+        ],
+        "categories": [
+            "persistence",
+            "defense_evasion",
+            "privilege_escalation",
+            "configuration_change"
+        ],
+        "fields": [
+            "TargetObject",
+            "Details",
+            "NewValue",
+            "OldValue",
+            "ProcessName",
+            "User",
+            "EventID",
+            "ProcessId"
+        ],
+        "keywords": [
+            "4657",
+            "sysmon event 13",
+            "sysmon event 14",
+            "reg add",
+            "reg copy",
+            "reg rename",
+            "currentversion",
+            "run key"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4657",
+                    "source": "Security",
+                    "description": "Registry Value Modified; logs changes to registry values, including modifications to startup entries, security settings, or system configurations. (Requires Audit Object Access policy)."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "13",
+                    "description": "Registry Value Set; captures changes to specific registry values (often used to detect persistence mechanisms)."
+                },
+                {
+                    "event_id": "14",
+                    "description": "Registry Key & Value Renamed; logs renaming of registry keys, which may indicate evasion attempts."
+                }
+            ],
+            "endpoint_detection_response": {
+                "capabilities": [
+                    "Monitor registry modifications for suspicious behavior.",
+                    "Alert on modification of high-value keys (e.g., Run keys, Service configs)."
+                ]
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "m365:unified",
+            "Channel": "MacroSecuritySettingsChanged or SafeModeDisabled"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "g_CiOptions modification or SIP state change"
+        },
+        {
+            "Name": "Windows Registry",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4657"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4663, 4670, 4656"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "modification to Winlogon registry keys such as Shell, Notify, or Userinit"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "Registry key modification HKLM\\Software\\Policies\\Microsoft\\Windows NT\\DNSClient\\EnableMulticast"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "StubPath value written under HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "EventCode=13, 14"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "Autoruns reports DLLs in AppInit_DLLs key"
+        }
+    ]
+}

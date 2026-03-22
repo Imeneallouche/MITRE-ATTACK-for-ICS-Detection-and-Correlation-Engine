@@ -1,0 +1,126 @@
+{
+    "id": "DC0005",
+    "name": "Scheduled Job Metadata",
+    "type": "DataComponent",
+    "description": "Contextual data about a scheduled job, which may include information such as name, timing, triggers, command(s), and author. Unlike creation events, this data component often represents the state or inventory of tasks currently registered on a system, useful for auditing persistence mechanisms and verifying authorized background jobs.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "command_output",
+            "endpoint",
+            "configuration_file"
+        ],
+        "indicator_types": [
+            "job_name",
+            "command_line",
+            "user"
+        ],
+        "categories": [
+            "persistence",
+            "system_inventory",
+            "audit"
+        ],
+        "fields": [
+            "TaskName",
+            "NextRunTime",
+            "Status",
+            "LastResult",
+            "Author",
+            "Command",
+            "Arguments",
+            "TriggerType"
+        ],
+        "keywords": [
+            "schtasks",
+            "get-scheduledtask",
+            "crontab",
+            "launchctl",
+            "task scheduler",
+            "cron.daily",
+            "plist"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "commands": [
+                {
+                    "tool": "schtasks",
+                    "command": "schtasks /query /v /fo list",
+                    "description": "Displays detailed metadata for all scheduled tasks."
+                },
+                {
+                    "tool": "PowerShell",
+                    "command": "Get-ScheduledTask | Get-ScheduledTaskInfo",
+                    "description": "Retrieves task definitions and recent runtime statistics."
+                }
+            ],
+            "registry": {
+                "path": "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree",
+                "description": "Registry location storing task definitions and metadata."
+            }
+        },
+        "linux_macos": {
+            "commands": [
+                {
+                    "tool": "crontab",
+                    "command": "crontab -l",
+                    "description": "Lists crontab entries for the current user."
+                },
+                {
+                    "tool": "launchctl (macOS)",
+                    "command": "launchctl list",
+                    "description": "Lists loaded launchd jobs and their status."
+                }
+            ],
+            "files": [
+                "/etc/crontab",
+                "/etc/cron.d/",
+                "/var/spool/cron/",
+                "/Library/LaunchDaemons/*.plist"
+            ],
+            "query_tools": {
+                "tool": "OSQuery",
+                "query": "SELECT * FROM scheduled_tasks;",
+                "description": "Retrieves metadata for tasks from both Windows Task Scheduler and Linux/macOS cron/launchd."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "esxi:syslog",
+            "Channel": "/var/log/vpxa.log task invocations tied to time configuration"
+        },
+        {
+            "Name": "fs:fileevents",
+            "Channel": "/Library/LaunchDaemons/*.plist, ~/Library/LaunchAgents/*.plist"
+        },
+        {
+            "Name": "linux:cron",
+            "Channel": "cron activity"
+        },
+        {
+            "Name": "macos:launchd",
+            "Channel": "launchd.plist and logs"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "New/modified launchd plist (persistence/scheduling) within TimeWindow after time query"
+        },
+        {
+            "Name": "Scheduled Job",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=106, 200"
+        },
+        {
+            "Name": "WinEventLog:TaskScheduler",
+            "Channel": "Task registration/execution shortly after a time discovery event"
+        }
+    ]
+}

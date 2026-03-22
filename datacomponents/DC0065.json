@@ -1,0 +1,162 @@
+{
+    "id": "DC0065",
+    "name": "Service Modification",
+    "type": "DataComponent",
+    "description": "Changes made to an existing service or daemon, such as modifying the service name, start type, execution parameters, or security configurations. Adversaries may modify services to downgrade security settings, establish persistence, or masquerade malicious processes as legitimate system services.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit",
+            "syslog"
+        ],
+        "indicator_types": [
+            "service_name",
+            "command_line",
+            "registry_key"
+        ],
+        "categories": [
+            "persistence",
+            "defense_evasion",
+            "privilege_escalation"
+        ],
+        "fields": [
+            "ServiceName",
+            "StartType",
+            "ImagePath",
+            "ServiceAccount",
+            "EventID",
+            "ProcessName",
+            "CommandLine",
+            "RegistryKey"
+        ],
+        "keywords": [
+            "7040",
+            "7045",
+            "sc config",
+            "set-service",
+            "systemctl",
+            "journalctl",
+            "auditctl",
+            "launchd",
+            "plist",
+            "sysmon event 13"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "7040",
+                    "source": "System",
+                    "description": "Detects modifications to the startup behavior of a service."
+                },
+                {
+                    "event_id": "7045",
+                    "source": "System",
+                    "description": "Can capture changes made to existing services."
+                },
+                {
+                    "event_id": "7036",
+                    "source": "System",
+                    "description": "Tracks when services start or stop, potentially indicating malicious tampering."
+                },
+                {
+                    "event_id": "4697",
+                    "source": "Security",
+                    "description": "Can detect when an adversary reinstalls a service with different parameters."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "13",
+                    "description": "Registry modifications; detects changes to service configurations.",
+                    "registry_path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\"
+                },
+                {
+                    "event_id": "1",
+                    "description": "Process Creation; tracks execution of service modification tools.",
+                    "tools": [
+                        "sc.exe",
+                        "PowerShell"
+                    ]
+                }
+            ],
+            "command_line_logging": {
+                "sources": [
+                    "Event ID 4104 (PowerShell Script Block)",
+                    "Event ID 4688 (Process Creation)"
+                ],
+                "indicators": [
+                    "Set-Service",
+                    "New-Service",
+                    "sc config <service_name> start= auto",
+                    "sc qc <service_name>"
+                ]
+            }
+        },
+        "linux": {
+            "logging": [
+                {
+                    "tool": "Systemd Journals",
+                    "command": "journalctl -u <service_name>",
+                    "description": "Tracks modifications to systemd service configurations."
+                },
+                {
+                    "files": [
+                        "/var/log/syslog",
+                        "/var/log/messages",
+                        "/var/log/daemon.log"
+                    ],
+                    "description": "Captures changes to service state and execution parameters."
+                }
+            ],
+            "audit_framework": {
+                "tool": "AuditD",
+                "rules": [
+                    {
+                        "command": "auditctl -w /etc/systemd/system/ -p wa -k service_modification",
+                        "description": "Monitor modifications to service unit files."
+                    },
+                    {
+                        "command": "auditctl -a always,exit -F arch=b64 -S execve -F a0=systemctl -F key=service_mod",
+                        "description": "Track execution of systemctl or service commands."
+                    }
+                ]
+            },
+            "query_tools": {
+                "tool": "OSQuery",
+                "query": "SELECT * FROM systemd_units WHERE state != 'running';",
+                "description": "Query modified services."
+            }
+        },
+        "macos": {
+            "launch_services": {
+                "monitored_paths": [
+                    "/Library/LaunchDaemons/",
+                    "/Library/LaunchAgents/"
+                ],
+                "description": "Track modifications to .plist files indicating persistence attempts."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "name": "Service",
+            "channel": "None"
+        },
+        {
+            "name": "WinEventLog:Microsoft-IIS-Configuration",
+            "channel": "Module or ISAPI filter registration events"
+        },
+        {
+            "name": "WinEventLog:System",
+            "channel": "EventCode=7040"
+        }
+    ]
+}

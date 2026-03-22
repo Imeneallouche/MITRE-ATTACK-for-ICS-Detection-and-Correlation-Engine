@@ -1,0 +1,553 @@
+{
+    "id": "DC0055",
+    "name": "File Access",
+    "type": "DataComponent",
+    "description": "Events where a file is opened or accessed, making its contents available to the requester. This includes reading, executing, or interacting with files by authorized or unauthorized entities. Examples include logging file access events (e.g., Windows Event ID 4663), monitoring file reads, and detecting unusual file access patterns.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "network",
+            "generic"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit",
+            "application",
+            "siem",
+            "syslog"
+        ],
+        "indicator_types": [
+            "string",
+            "regex",
+            "username"
+        ],
+        "categories": [
+            "file_system",
+            "file_access",
+            "process_execution",
+            "network_share"
+        ],
+        "fields": [
+            "EventID",
+            "FileName",
+            "FilePath",
+            "AccessMask",
+            "User",
+            "ProcessName",
+            "ShareName"
+        ],
+        "keywords": [
+            "4663",
+            "sysmon event 1",
+            "sysmon event 11",
+            "auditctl",
+            "ausearch",
+            "inotifywait",
+            "fs_usage",
+            "smb",
+            "cifs",
+            "nas"
+        ]
+    },
+    "access_scenarios": [
+        {
+            "type": "File Read Operations",
+            "description": "A user opens a sensitive document on a shared drive.",
+            "example_file": "financial_report.xlsx"
+        },
+        {
+            "type": "File Execution",
+            "description": "A script or executable file is accessed and executed.",
+            "example_file": "malware.exe"
+        },
+        {
+            "type": "Unauthorized File Access",
+            "description": "An unauthorized user attempts to access a protected configuration file.",
+            "examples": [
+                "/etc/passwd",
+                "System32 files"
+            ]
+        },
+        {
+            "type": "File Access Patterns",
+            "description": "Bulk access to multiple files in a short time.",
+            "example_context": "Mass access to documents on a file server"
+        },
+        {
+            "type": "File Access via Network",
+            "description": "Files on a network share are accessed remotely.",
+            "protocol_examples": [
+                "SMB",
+                "CIFS"
+            ]
+        }
+    ],
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4663",
+                    "description": "Captures file system auditing details, including who accessed the file, access type, and file name."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "11",
+                    "description": "Logs file creation time changes."
+                },
+                {
+                    "event_id": "1",
+                    "description": "Process creation; can provide insight into files executed."
+                }
+            ],
+            "powershell_monitoring": {
+                "command": "Get-WinEvent -FilterHashtable @{LogName='Security'; ID=4663}",
+                "description": "Monitor file access in real-time."
+            }
+        },
+        "linux": {
+            "audit_framework": {
+                "tool": "auditd",
+                "configuration_rule": "auditctl -w /path/to/file -p rwxa -k file_access",
+                "log_review_command": "ausearch -k file_access"
+            },
+            "inotify": {
+                "tool": "inotifywait",
+                "command": "inotifywait -m /path/to/watch -e access",
+                "description": "Track file access on Linux."
+            }
+        },
+        "macos": {
+            "unified_logs": {
+                "description": "Monitor file access using the macOS Unified Logging System."
+            },
+            "file_system_events": {
+                "tool": "fs_usage",
+                "command": "fs_usage | grep open"
+            }
+        },
+        "network_devices": {
+            "logs": [
+                "SMB/CIFS Logs",
+                "NAS Logs"
+            ],
+            "description": "Monitor file access over network shares."
+        },
+        "siem_integration": {
+            "action": "Collect file access logs from all platforms and centralize in a SIEM for correlation and analysis."
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:FILE",
+            "Channel": "/home/*/.mozilla/firefox/*/logins.json OR /home/*/.config/google-chrome/*/Login Data"
+        },
+        {
+            "Name": "auditd:FILE",
+            "Channel": "/proc/*/mem read attempt"
+        },
+        {
+            "Name": "auditd:FS",
+            "Channel": "read: File access to /proc/modules or /sys/module/"
+        },
+        {
+            "Name": "auditd:PATH",
+            "Channel": "Read access to known backup software configuration files (e.g., /etc/rsnapshot.conf,\n                /opt/veeam/config.ini)"
+        },
+        {
+            "Name": "auditd:PATH",
+            "Channel": "open: Access to sensitive log files (/var/log/auth.log, /var/log/secure, /var/log/syslog)"
+        },
+        {
+            "Name": "auditd:PATH",
+            "Channel": "PATH"
+        },
+        {
+            "Name": "auditd:PATH",
+            "Channel": "file read"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open, read, or stat of browser config files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open: File access attempt on /tmp/krb5cc_* or /tmp/krb5.ccache"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "openat"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open, read"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open, flock, fcntl, unlink"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "read/open of sensitive files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Unusual processes accessing or modifying cookie databases"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "PATH records referencing /dev/video*"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open, read: /etc/ssl/, /etc/pki/, ~/.pki/nssdb/"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Processes reading credential or token cache files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "read/open of sensitive file directories"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read of sensitive config or secret files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read of sensitive directories"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read: Access to /proc/self/status with focus on TracerPID field"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read access to ~/.bash_history"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open,read"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read system calls to ~/.bash_history or /etc/shadow"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "read of /run/secrets or docker volumes by non-entrypoint process"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Reads of ~/.bash_history, ~/.mozilla, or access to /dev/input"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open: Access to named pipes or FIFO in /tmp or /dev/shm by unexpected processes"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open or read to browser cookie storage"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open, read, mount"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "file"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Access to /var/lib/sss/secrets/secrets.ldb or .secrets.mkey"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read of sensitive directories (/etc, /home/*)"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "PATH"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "open/read on ~/.local/share/keepassxc/* OR ~/.password-store/*"
+        },
+        {
+            "Name": "azure:activity",
+            "Channel": "CollectGuestLogs: Unexpected collection of guest logs by Azure VM Agent outside normal maintenance\n                windows"
+        },
+        {
+            "Name": "CloudTrail:GetObject",
+            "Channel": "sensitive credential files in buckets or local image storage"
+        },
+        {
+            "Name": "desktop:file_manager",
+            "Channel": "nautilus, dolphin, or gvfs logs"
+        },
+        {
+            "Name": "ebpf:syscalls",
+            "Channel": "container_file_activity"
+        },
+        {
+            "Name": "ebpf:syscalls",
+            "Channel": "open/read on secret mount paths"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "datastore file access"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "read: Access to sensitive log files by non-admin users"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "datastore/log file access"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "vSphere File API Access"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "file copy or datastore upload via HTTPS"
+        },
+        {
+            "Name": "esxi:syslog",
+            "Channel": "guest OS outbound transfer logs"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "VMFS access logs"
+        },
+        {
+            "Name": "esxis:vmkernel",
+            "Channel": "Datastore Access"
+        },
+        {
+            "Name": "File",
+            "Channel": "None"
+        },
+        {
+            "Name": "fs:fileevents",
+            "Channel": "File system access\n                events with kFSEventStreamEventFlagItemRemoved,\n                kFSEventStreamEventFlagItemRenamed flags for environmental artifact\n                collection (/System/Library, /usr/sbin, plist files)"
+        },
+        {
+            "Name": "fs:fsevents",
+            "Channel": "file system events indicating access to system configuration files and environmental information sources\n            "
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "file"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "File Access Monitor"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "Disk Activity Tracing"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "filesystem activity"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "Filesystem Call Monitoring"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "read/write"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "file open for known browser cookie paths"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "file reads/writes from /Volumes/"
+        },
+        {
+            "Name": "fs:quarantine",
+            "Channel": "/var/log/quarantine.log"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "Write operations to storage"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "GET or LIST requests to /var/run/secrets/kubernetes.io/serviceaccount/ followed by access to the\n                Kubernetes API server"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "/proc/*/maps access"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "None"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "auth.log or custom tool logs"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "/var/log/syslog"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "kernel messages related to cryptographic operations, module loading, and filesystem access patterns"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "FileAccessed, MailboxAccessed"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Bulk downloads or API extractions from Microsoft-hosted data repositories (e.g., Dynamics 365)"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "ES_EVENT_TYPE_NOTIFY_OPEN: Open of .dylib/.so in user-writable locations"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "open: Process opens AppleCamera/IOUSB device nodes or AVFoundation frameworks"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "open or read syscall to ~/.bash_history"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "es_event_open, es_event_exec"
+        },
+        {
+            "Name": "macos:keychain",
+            "Channel": "Access to Keychain DB or system.keychain"
+        },
+        {
+            "Name": "macos:keychain",
+            "Channel": "~/Library/Keychains, /Library/Keychains"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "file_events"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "None"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Access to ~/Library/*/Safari or Chrome directories by non-browser processes"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "file events"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Kerberos framework calls to API:{uuid} cache outside normal process lineage"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "~/Library/Application Support/Google/Chrome/*/Login Data OR ~/Library/Application\n                Support/Firefox/*/logins.json"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Read access to Time Machine plist files or CCC configurations in ~/Library/Preferences/"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream - file subsystem"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "file read of sensitive directories"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Abnormal process access to Safari or Chrome cookie storage"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "open: Access to /var/log/system.log or related security event logs"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "open/read of *.plist or .env files"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "read of user document directories"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "read access to ~/Library/Keychains/login.keychain-db"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "filesystem and process events"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "read access to ~/Library/Keychains or history files by terminal processes"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "access to /Volumes/SharePoint or network mount"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Access to ~/Library/Safari/Bookmarks.plist or recent files"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "access to keychain database"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream - file provider subsystem"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "read/write of user documents prior to upload"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "open/read access to private key files (id_rsa, *.pem, *.p12)"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "read: File access to /System/Library/Extensions/ or related kernel extension paths"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "*.opvault OR *.ldb OR *.kdbx"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-Windows Defender/Operational",
+            "Channel": "Suspicious file execution on removable media path"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4663, 4670, 4656"
+        }
+    ]
+}

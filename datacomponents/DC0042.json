@@ -1,0 +1,220 @@
+{
+    "id": "DC0042",
+    "name": "Drive Creation",
+    "type": "DataComponent",
+    "description": "The activity of assigning a new drive letter or creating a mount point for a data storage device, such as a USB, network share, or external hard drive, enabling access to its content on a host system.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "network",
+            "cloud"
+        ],
+        "log_source_types": [
+            "event_log",
+            "syslog",
+            "audit",
+            "endpoint",
+            "siem"
+        ],
+        "indicator_types": [
+            "string",
+            "regex",
+            "ip"
+        ],
+        "categories": [
+            "storage_management",
+            "removable_media",
+            "network_shares",
+            "virtualization"
+        ],
+        "fields": [
+            "EventID",
+            "DriveLetter",
+            "MountPoint",
+            "DeviceName",
+            "VolumeName",
+            "SharePath"
+        ],
+        "keywords": [
+            "usb",
+            "mount",
+            "network drive",
+            "virtual disk",
+            "iso",
+            "vhd",
+            "event id 98",
+            "event id 1006",
+            "dmesg",
+            "journalctl",
+            "auditd",
+            "diskutil"
+        ]
+    },
+    "creation_scenarios": [
+        {
+            "type": "USB Drive Insertion",
+            "description": "A USB drive is plugged in and automatically assigned a drive letter.",
+            "example_pattern": "[A-Z]:\\"
+        },
+        {
+            "type": "Network Drive Mapping",
+            "description": "A network share is mapped to a local drive letter.",
+            "example_pattern": "\\\\[server]\\[share] -> [A-Z]:\\"
+        },
+        {
+            "type": "Virtual Drive Creation",
+            "description": "A virtual disk (ISO or VHD) is mounted to a specific path.",
+            "example_pattern": "/mnt/[virtualdrive]"
+        },
+        {
+            "type": "Cloud Storage Mounting",
+            "description": "Cloud storage services mounted as a local drive using sync tools.",
+            "example_pattern": "[Provider] -> [A-Z]:\\"
+        },
+        {
+            "type": "External Storage Integration",
+            "description": "External HDD or SSD connection and assignment to a mount point.",
+            "example_pattern": "/mnt/[external]"
+        }
+    ],
+    "collection_measures": {
+        "windows_event_logs": {
+            "events": [
+                {
+                    "event_id": "98",
+                    "description": "Logs the creation of a volume (mount or new drive letter assignment)."
+                },
+                {
+                    "event_id": "1006",
+                    "description": "Logs removable storage device insertions."
+                }
+            ],
+            "configuration": {
+                "policy_path": "Computer Configuration > Administrative Templates > System > Removable Storage Access",
+                "setting": "Enable 'Removable Storage Events'"
+            }
+        },
+        "linux_system_logs": {
+            "command_line_monitoring": [
+                "dmesg",
+                "journalctl"
+            ],
+            "audit_configuration": {
+                "action": "Add audit rules to track mount points.",
+                "log_file": "/var/log/audit/audit.log"
+            }
+        },
+        "macos_system_logs": {
+            "log_source": "Unified Logs",
+            "tools": [
+                {
+                    "command": "diskutil list",
+                    "description": "Verify newly created or mounted drives."
+                }
+            ]
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Log removable drive usage",
+                "Log network-mounted drives",
+                "Alert on suspicious drive creation events"
+            ]
+        },
+        "siem_tools": {
+            "action": "Centralize logs from multiple platforms to correlate and alert on suspicious activities.",
+            "example_tool": "Splunk"
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "mknod,open,openat"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Removable media mount notification"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "device event logs"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "udev events or drive enumeration involving TinyPilot paths or device classes"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Kernel Device Events - USB Block Devices"
+        },
+        {
+            "Name": "Drive",
+            "Channel": "None"
+        },
+        {
+            "Name": "journald:systemd",
+            "Channel": "udisks2 or udevd logs"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "mount_events"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Device attach logs containing TinyPilot/PiKVM identifiers"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "New HID device enumeration with type 'keyboard' followed by immediate input injection"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "mounted|appeared|DA: disk* attached"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "com.apple.diskarbitration"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Volume Mount + File Read"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Hardware enumeration events via IOKit or USBMuxd showing TinyPilot or unknown keyboard/mouse"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Volume Mount + Process Trace + File Read"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate 'eventMessage contains \"USBMSC\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "New IOUSB keyboard/HID device enumerated with suspicious attributes"
+        },
+        {
+            "Name": "maos:osquery",
+            "Channel": "mount_events"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "Kernel-PnP 410/400 device install, disk added"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=1006"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=1006, 10001"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=2003"
+        }
+    ]
+}

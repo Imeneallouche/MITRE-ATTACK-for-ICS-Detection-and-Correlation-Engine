@@ -1,0 +1,5 @@
+elasticsearch>=8.13.0
+pydantic>=2.7.0
+PyYAML>=6.0.1
+python-dateutil>=2.9.0.post0
+pyahocorasick>=2.1.0

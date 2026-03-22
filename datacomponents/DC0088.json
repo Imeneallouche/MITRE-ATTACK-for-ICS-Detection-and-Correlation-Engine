@@ -1,0 +1,240 @@
+{
+    "id": "DC0088",
+    "name": "Logon Session Metadata",
+    "type": "DataComponent",
+    "description": "Contextual data about a logon session, such as username, logon type, access tokens (security context, user SIDs, logon identifiers, and logon SID), and any activity associated within it. This data represents the state of an active session and the privileges available to it.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "command_output",
+            "system_state",
+            "event_log"
+        ],
+        "indicator_types": [
+            "user",
+            "session_id",
+            "sid"
+        ],
+        "categories": [
+            "credential_access",
+            "discovery",
+            "privilege_escalation"
+        ],
+        "fields": [
+            "User",
+            "Domain",
+            "LogonId",
+            "LogonType",
+            "AuthenticationPackage",
+            "SessionId",
+            "LogonTime",
+            "TokenElevation"
+        ],
+        "keywords": [
+            "logonsessions",
+            "quser",
+            "whoami",
+            "loginctl",
+            "win32_logonsession",
+            "luid",
+            "token"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "sysinternals": {
+                "tool": "LogonSessions",
+                "command": "logonsessions -p",
+                "description": "Lists the currently active logon sessions and, if specified, the processes running in each session."
+            },
+            "native_commands": [
+                {
+                    "command": "query user / quser",
+                    "description": "Displays information about user sessions on a Remote Desktop Session Host server."
+                },
+                {
+                    "command": "whoami /all",
+                    "description": "Displays the current user's security identifier (SID), group memberships, and privileges (token metadata)."
+                }
+            ],
+            "powershell": {
+                "command": "Get-CimInstance Win32_LogonSession",
+                "description": "Retrieves the configuration of the logon session (LogonID, StartTime, LogonType)."
+            },
+            "event_logs": {
+                "event_id": "4624",
+                "description": "Logon Success; contains the initial snapshot of session metadata (Logon GUID, Logon ID, Token Elevation Type)."
+            }
+        },
+        "linux": {
+            "systemd": {
+                "command": "loginctl list-sessions",
+                "description": "List current sessions managed by systemd-logind."
+            },
+            "commands": [
+                {
+                    "command": "w",
+                    "description": "Show who is logged on and what they are doing."
+                },
+                {
+                    "command": "last",
+                    "description": "Show listing of last logged in users."
+                }
+            ],
+            "files": {
+                "path": "/var/run/utmp",
+                "description": "File containing the current status of the system (who is currently logged in)."
+            }
+        },
+        "macos": {
+            "commands": [
+                {
+                    "command": "who",
+                    "description": "Display who is logged in."
+                }
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "ssh logins or execve of remote commands"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve,socket,connect,openat"
+        },
+        {
+            "Name": "auditd:USER_LOGIN",
+            "Channel": "USER_LOGIN"
+        },
+        {
+            "Name": "azure:audit",
+            "Channel": "Add delegated admin / Assign admin roles / Update application consent"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "SAML-based login with anomalous issuer or NotOnOrAfter lifetime"
+        },
+        {
+            "Name": "esxi:auth",
+            "Channel": "None"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "/var/log/hostd.log"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "google.iam.credentials.generateAccessToken / serviceAccountTokenCreator"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "Unauthorized container creation or kubelet exec logs"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "None"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sssd / sudo logs"
+        },
+        {
+            "Name": "Logon Session",
+            "Channel": "None"
+        },
+        {
+            "Name": "m365:signinlogs",
+            "Channel": "UserLogin"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Abnormal user claims or unexpected elevated role assignment in SAML assertion"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "FileAccessed, SharingSet"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "LoginWindow context with associated PID linked to reopened plist paths"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "authd generating multiple MFA token requests"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Remote login (ssh) or screen sharing authentication attempts"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "loginwindow or sshd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Group membership change for admin or wheel"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Unusual Kerberos TGS-REQ without TGT or anomalous ticket lifetime"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "loginwindow, sshd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "loginwindow or sshd events with external IP"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process = 'sshd'"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "Successful sudo or ssh from unknown IPs"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "user.session.start, app.oauth2.as.authorize, policy.mfa.bypass"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "user.authentication.sso"
+        },
+        {
+            "Name": "saas:salesforce",
+            "Channel": "ConnectedApp OAuth policy change / Login as user"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4672"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4672, 4634"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4624, 4625, 4768, 4769"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4778, EventCode=4779"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4800, 4801"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4776, 4771, 4770"
+        }
+    ]
+}

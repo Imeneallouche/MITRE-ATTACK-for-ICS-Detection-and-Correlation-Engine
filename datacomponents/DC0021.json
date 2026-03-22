@@ -1,0 +1,391 @@
+{
+    "id": "DC0021",
+    "name": "OS API Execution",
+    "type": "DataComponent",
+    "description": "Calls made by a process to operating system-provided Application Programming Interfaces (APIs). These calls are essential for interacting with system resources such as memory, files, and hardware, or for performing system-level tasks. Monitoring these calls can provide insight into a process's intent, especially if the process is malicious.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "endpoint",
+            "event_log",
+            "audit",
+            "application"
+        ],
+        "indicator_types": [
+            "string",
+            "trace"
+        ],
+        "categories": [
+            "api_execution",
+            "process_access",
+            "system_calls",
+            "malware_analysis"
+        ],
+        "fields": [
+            "SourceProcessId",
+            "TargetProcessId",
+            "CallTrace",
+            "API",
+            "GrantedAccess",
+            "SystemCall",
+            "ReturnValue"
+        ],
+        "keywords": [
+            "sysmon event 10",
+            "4688",
+            "4657",
+            "procmon",
+            "auditd",
+            "strace",
+            "falco",
+            "cuckoo sandbox",
+            "windbg",
+            "gdb"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "edr_and_sysmon": [
+                {
+                    "event_id": "10",
+                    "source": "Sysmon",
+                    "description": "Captures API call traces for process access and memory allocation."
+                }
+            ],
+            "event_logs": [
+                {
+                    "event_id": "4688",
+                    "description": "A new process has been created (can indirectly infer API use)."
+                },
+                {
+                    "event_id": "4657",
+                    "description": "A registry value has been modified (monitor registry-altering APIs)."
+                }
+            ],
+            "debugging_tools": [
+                {
+                    "name": "Process Monitor (ProcMon)",
+                    "description": "Collect detailed logs of process and API activity."
+                },
+                {
+                    "name": "WinDbg",
+                    "description": "Deep tracing of API executions in real time."
+                }
+            ]
+        },
+        "linux_macos": {
+            "audit_frameworks": [
+                {
+                    "tool": "auditd",
+                    "description": "Capture system call usage that APIs map to."
+                },
+                {
+                    "tool": "strace",
+                    "description": "Analyze system call usage."
+                }
+            ],
+            "runtime_monitors": [
+                {
+                    "tool": "Falco",
+                    "description": "Monitor system-level calls for API execution."
+                }
+            ],
+            "debugging_tools": [
+                {
+                    "tool": "gdb",
+                    "description": "Deep tracing of API executions in real time."
+                }
+            ]
+        },
+        "dynamic_analysis": {
+            "tools": [
+                "Cuckoo Sandbox",
+                "Flare VM",
+                "Hybrid Analysis"
+            ],
+            "description": "Monitor API execution during malware detonation."
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:MMAP",
+            "Channel": "memory region with RWX permissions allocated"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "ptrace, ioctl"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Rules capturing clock_gettime, time, gettimeofday syscalls when enabled"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "openat/read/ioctl: openat/read/ioctl on /dev/video* by uncommon user/process"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "mmap, ptrace, process_vm_writev or direct memory ops"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "unshare, mount, keyctl, setns syscalls executed by containerized processes"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "send, recv, write: Abnormal interception or alteration of transmitted data"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "sudo or pkexec invocation"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "mount system call with bind or remap flags"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "fork/clone/daemon syscall tracing"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "ptrace, mmap, mprotect, open, dlopen"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "ptrace, mmap, process_vm_writev"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve of dd or sed targeting /proc/*/mem"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "GetMetadata, DescribeInstanceIdentity"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "Describe* or List* API calls"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "Decrypt"
+        },
+        {
+            "Name": "EDR:file",
+            "Channel": "SetFileTime"
+        },
+        {
+            "Name": "EDR:memory",
+            "Channel": "Behavioral API telemetry (GetProcAddress, LoadLibrary, VirtualAlloc)"
+        },
+        {
+            "Name": "EDR:memory",
+            "Channel": "API usage MFCreateDeviceSource, IAMStreamConfig, ICaptureGraphBuilder2, DirectShow filter graph creation\n                from uncommon callers"
+        },
+        {
+            "Name": "EDR:memory",
+            "Channel": "Objective‑C/Swift calls to AVCaptureDevice/AVCaptureSession by non-whitelisted processes"
+        },
+        {
+            "Name": "EDR:memory",
+            "Channel": "VirtualAlloc/VirtualProtect/MapViewOfFile indicators via stack/heap activity and ImageLoad"
+        },
+        {
+            "Name": "EDR:memory",
+            "Channel": "MemoryWriteToExecutable"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Remote access API calls and file uploads"
+        },
+        {
+            "Name": "ETW",
+            "Channel": "Calls to GetUserDefaultUILanguage, GetSystemDefaultUILanguage, GetKeyboardLayoutList"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Directory-Services-SAM",
+            "Channel": "api_call: Calls to DsAddSidHistory or related RPC operations"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-DotNETRuntime",
+            "Channel": "AssemblyLoad/ModuleLoad (Loader keyword) from Microsoft-Windows-DotNETRuntime"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Base",
+            "Channel": "GetLocaleInfoW, GetTimeZoneInformation API calls"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-File",
+            "Channel": "ZwSetEaFile or ZwQueryEaFile function calls"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "API tracing / stack tracing via ETW or telemetry-based EDR"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "APCQueueOperations"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "High-frequency or suspicious sequence of QueryPerformanceCounter/GetTickCount API calls from a\n                non-standard process lineage"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "API Calls"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "NtQueryInformationProcess"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "NtUnmapViewOfSection, VirtualAllocEx, WriteProcessMemory, SetThreadContext, ResumeThread"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "api_call:\n                UpdateProcThreadAttribute (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS) and\n                CreateProcess* with EXTENDED_STARTUPINFO_PRESENT / StartupInfoEx"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "API calls"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "CreateTransaction, CreateFileTransacted, RollbackTransaction, NtCreateProcessEx, NtCreateThreadEx"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "WriteProcessMemory: WriteProcessMemory targeting regions containing KernelCallbackTable addresses"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-RPC",
+            "Channel": "rpc_call: srvsvc.NetShareEnum / NetShareEnumAll from non-admin or unusual processes"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Security-Auditing",
+            "Channel": "api_call: LogonUser(A|W), LsaLogonUser, SetThreadToken, ImpersonateLoggedOnUser"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Win32k",
+            "Channel": "SetWindowLong, SetClassLong, NtUserMessageCall, SendNotifyMessage, PostMessage"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Win32k",
+            "Channel": "SendMessage, PostMessage, LVM_*"
+        },
+        {
+            "Name": "ETW:ProcThread",
+            "Channel": "api_call: CreateProcessWithTokenW, CreateProcessAsUserW"
+        },
+        {
+            "Name": "ETW:Token",
+            "Channel": "token_analysis: API calls such as DuplicateTokenEx or ImpersonateLoggedOnUser"
+        },
+        {
+            "Name": "ETW:Token",
+            "Channel": "api_call: DuplicateTokenEx, ImpersonateLoggedOnUser, SetThreadToken"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "Detached process execution with no associated parent"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Execution of modified binaries or abnormal library load sequences"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "open, execve: Unexpected processes accessing or modifying critical files"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "CALCULATE: Integrity validation of transmitted data via hash checks"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "None"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Invocation of SMLoginItemSetEnabled by non-system or recently installed application"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "flock|NSDistributedLock|FileHandle.*lockForWriting"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "application logs referencing NSTimer, sleep, or launchd delays"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Access decisions to kTCCServiceCamera for unexpected binaries"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "audio APIs"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "com.apple.securityd, com.apple.tccd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "authorization execute privilege requests"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "ptrace: Processes invoking ptrace with PTRACE_TRACEME flag"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Calls to AuthorizationExecuteWithPrivileges() observed via Apple System Logger or security_auditing\n                tools"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "access or unlock attempt to keychain database"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of input detection APIs (e.g., CGEventSourceKeyState)"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "aaa privilege_exec"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Unexpected reload, crashinfo, or boot message not tied to scheduled maintenance"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "smb_command: TreeConnectAndX to \\\\*\\IPC$ / srvsvc or Trans2/NT_CREATE for listing shares"
+        },
+        {
+            "Name": "Process",
+            "Channel": "None"
+        },
+        {
+            "Name": "snmp:trap",
+            "Channel": "management queries"
+        },
+        {
+            "Name": "WinEventLog:Application",
+            "Channel": "API call to AddMonitor invoked by non-installer process"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-COM/Operational",
+            "Channel": "CLSID activation events where ProcessName=mmc.exe and CLSID not in allowed baseline"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4663, 4670, 4656"
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+  "index_patterns": ["ics-correlations-*"],
+  "priority": 501,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "group_id": { "type": "keyword" },
+        "asset_id": { "type": "keyword" },
+        "asset_name": { "type": "keyword" },
+        "first_timestamp": { "type": "date" },
+        "last_timestamp": { "type": "date" },
+        "chain_ids": { "type": "keyword" },
+        "chain_depth": { "type": "integer" },
+        "aggregate_score": { "type": "float" },
+        "event_count": { "type": "integer" }
+      }
+    }
+  }
+}

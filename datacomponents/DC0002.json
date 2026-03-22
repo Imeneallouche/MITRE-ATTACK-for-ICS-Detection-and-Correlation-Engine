@@ -1,0 +1,568 @@
+{
+    "id": "DC0002",
+    "name": "User Account Authentication",
+    "type": "DataComponent",
+    "description": "An attempt (successful and failed login attempts) by a user, service, or application to gain access to a network, system, or cloud-based resource. This typically involves credentials such as passwords, tokens, multi-factor authentication (MFA), or biometric validation.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "cloud",
+            "aws",
+            "azure",
+            "gcp",
+            "saas",
+            "containers",
+            "kubernetes"
+        ],
+        "log_source_types": [
+            "event_log",
+            "audit",
+            "cloud_audit",
+            "application"
+        ],
+        "indicator_types": [
+            "username",
+            "ip",
+            "user_agent"
+        ],
+        "categories": [
+            "authentication",
+            "credential_access",
+            "lateral_movement",
+            "insider_threat"
+        ],
+        "fields": [
+            "User",
+            "SourceIp",
+            "LogonType",
+            "Status",
+            "FailureReason",
+            "Service",
+            "EventID",
+            "AuthenticationMethod"
+        ],
+        "keywords": [
+            "4624",
+            "4625",
+            "4776",
+            "auth.log",
+            "secure",
+            "pam",
+            "sign-in logs",
+            "cloudtrail",
+            "iam",
+            "kubectl",
+            "mfa"
+        ]
+    },
+    "collection_measures": {
+        "host_based_authentication": {
+            "windows": {
+                "event_logs": [
+                    {
+                        "event_id": "4776",
+                        "description": "NTLM authentication attempt."
+                    },
+                    {
+                        "event_id": "4624",
+                        "description": "Successful user logon."
+                    },
+                    {
+                        "event_id": "4625",
+                        "description": "Failed authentication attempt."
+                    },
+                    {
+                        "event_id": "4648",
+                        "description": "Explicit logon with alternate credentials."
+                    }
+                ]
+            },
+            "linux_macos": {
+                "log_files": [
+                    "/var/log/auth.log",
+                    "/var/log/secure"
+                ],
+                "audit_framework": {
+                    "tool": "AuditD",
+                    "description": "Tracks authentication events via PAM modules."
+                },
+                "macos_unified_logs": {
+                    "path": "/var/db/diagnostics",
+                    "description": "Captures authentication failures."
+                }
+            }
+        },
+        "cloud_authentication": {
+            "azure_ad": {
+                "logs": [
+                    "Sign-in Logs (Tracks attempts, MFA, conditional access)",
+                    "Audit Logs (Captures auth-related config changes)"
+                ],
+                "api": "Microsoft Graph API"
+            },
+            "google_workspace_office_365": {
+                "google": {
+                    "source": "Google Admin Console",
+                    "report": "User Login Report"
+                },
+                "office_365": {
+                    "source": "Unified Audit Logs",
+                    "scope": [
+                        "Exchange",
+                        "SharePoint",
+                        "Teams"
+                    ]
+                }
+            },
+            "aws": {
+                "source": "CloudTrail & IAM",
+                "events": [
+                    "AWS IAM AuthenticateUser",
+                    "sts:GetSessionToken"
+                ],
+                "description": "Logs failed authentications to Console and API requests."
+            }
+        },
+        "container_authentication": {
+            "kubernetes": {
+                "logs": "kubectl audit logs",
+                "description": "Captures authentication attempts for service accounts and admin users."
+            },
+            "managed_k8s": {
+                "platforms": [
+                    "Azure Kubernetes Service (AKS)",
+                    "Google Kubernetes Engine (GKE)"
+                ],
+                "description": "Logs IAM authentication events."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:AUTH",
+            "Channel": "pam_unix or pam_google_authenticator invoked repeatedly within short interval"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "pam_authenticate, sshd"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execution of ssh, scp, or sftp using previously unseen credentials or keys"
+        },
+        {
+            "Name": "auditd:USER_LOGIN",
+            "Channel": "USER_AUTH"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "AssumeRole or ConsoleLogin with repeated MFA failures followed by repeated MFA requests"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "sts:GetFederationToken"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "AssumeRoleWithWebIdentity"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "AWS IAM: ListUsers, ListRoles"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "eventName=ConsoleLogin | eventType=AwsConsoleSignIn"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "ConsoleLogin or AssumeRole"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "ConsoleLogin, AssumeRole, ListAccessKeys, CreateUser"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Success logs from high-risk accounts"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Multiple MFA challenge requests without successful primary login"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "TokenIssued, TokenRenewed: Unexpected or anomalous token issuance events"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "SignIn: Sign-ins\n        flagged as atypical (new geographic region, unfamiliar device id)\n        shortly after correlated endpoint/browser compromise times"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Operation=UserLogin"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Unusual Token Usage or Application Consent"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "OperationName=SetDomainAuthentication OR Set-FederatedDomain"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Sign-in with unfamiliar location/device + portal navigation"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Login from newly created account"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Interactive/Non-Interactive Sign-In"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Reset password or download key from portal"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "status = failure"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Sign-in logs"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "SigninSuccess"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Failure Reason + UserPrincipalName"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Sign-in activity"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "Sign-in logs / audit events"
+        },
+        {
+            "Name": "esxi:auth",
+            "Channel": "interactive shell or SSH access preceding storage enumeration"
+        },
+        {
+            "Name": "esxi:auth",
+            "Channel": "/var/log/auth.log"
+        },
+        {
+            "Name": "esxi:auth",
+            "Channel": "SSH session/login"
+        },
+        {
+            "Name": "esxi:vpxa",
+            "Channel": "user login from unexpected IP or non-admin user role"
+        },
+        {
+            "Name": "esxi:vpxd",
+            "Channel": "/var/log/vmware/vpxd.log"
+        },
+        {
+            "Name": "ESXiLogs:authlog",
+            "Channel": "Unexpected login followed by encoding commands"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "drive.activity"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "login.event"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "Sign-in logs / audit events"
+        },
+        {
+            "Name": "gcp:workspaceaudit",
+            "Channel": "Token Generation via Domain Delegation"
+        },
+        {
+            "Name": "GCPAuditLogs:login.googleapis.com",
+            "Channel": "Failed sign-in events"
+        },
+        {
+            "Name": "kubernetes:apiserver",
+            "Channel": "get/list requests to /api/v1/secrets or /api/v1/namespaces/*/serviceaccounts"
+        },
+        {
+            "Name": "kubernetes:apiserver",
+            "Channel": "authentication.k8s.io/v1beta1"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "Failed login"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "authentication.k8s.io"
+        },
+        {
+            "Name": "linux:auth",
+            "Channel": "sshd login"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sudo/date/timedatectl execution by non-standard users"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "SSH failed login"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Failed password for invalid user"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sshd[pid]: Failed password"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "authentication and authorization events during environmental validation phase"
+        },
+        {
+            "Name": "m365:exchange",
+            "Channel": "Logon failure"
+        },
+        {
+            "Name": "m365:exchange",
+            "Channel": "FailedLogin"
+        },
+        {
+            "Name": "m365:signinlogs",
+            "Channel": "Sign-in from anomalous location or impossible travel condition"
+        },
+        {
+            "Name": "m365:signinlogs",
+            "Channel": "UserLoginSuccess"
+        },
+        {
+            "Name": "m365:signinlogs",
+            "Channel": "Unusual sign-in from service principal to user mailbox"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Delegated permission grants without user login event"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "login using refresh_token with no preceding authentication context"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Sign-in logs"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "successful sudo or authentication for account not normally associated with admin actions"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Login success without MFA step"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log show --predicate 'eventMessage contains \"Authentication\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "User credential prompt events without associated trusted installer package"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Login failure / authorization denied"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "auth"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Login Window and Authd errors"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "authd"
+        },
+        {
+            "Name": "network:auth",
+            "Channel": "repeated successful authentications with previously unknown accounts or anomalous password acceptance"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "config access, authentication logs"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "User privilege escalation to level 15/root prior to destructive commands"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "authorization/accounting logs"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Failed and successful logins to network devices outside approved admin IP ranges"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Privileged login followed by destructive format command"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "admin login events"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Privileged login followed by destructive command sequence"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "AAA, RADIUS, or TACACS authentication"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "authentication logs"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "AAA or TACACS authentication failures"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "authentication &amp; authorization"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "login failed"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "Accepted password or publickey for user from remote IP"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "Repeated failed authentication attempts or replay patterns"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "Successful login without expected MFA challenge"
+        },
+        {
+            "Name": "NSM:Connections",
+            "Channel": "sshd or PAM logins"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "TGS-REQ and AS-REQ seen for new user shortly after domain-modifying process"
+        },
+        {
+            "Name": "Okta:authn",
+            "Channel": "authentication_failure"
+        },
+        {
+            "Name": "Okta:SystemLog",
+            "Channel": "eventType: user.authentication.sso, app.oauth2.token.grant"
+        },
+        {
+            "Name": "saas-app:auth",
+            "Channel": "login_failure"
+        },
+        {
+            "Name": "saas:audit",
+            "Channel": "Repeated requests to SMS-generating endpoints using anomalous or new user agents, IP ranges, or geographies.\n      "
+        },
+        {
+            "Name": "saas:auth",
+            "Channel": "signin_failed"
+        },
+        {
+            "Name": "saas:googleworkspace",
+            "Channel": "API access without user login"
+        },
+        {
+            "Name": "saas:googleworkspace",
+            "Channel": "Accessed third-party credential management service"
+        },
+        {
+            "Name": "saas:googleworkspace",
+            "Channel": "login with reused session token and mismatched user agent or IP"
+        },
+        {
+            "Name": "saas:googleworkspace",
+            "Channel": "Access via OAuth credentials with unusual scopes or from anomalous IPs"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "session.impersonation.start"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "Unusual OAuth app requesting message-read scopes for Slack/Teams/Jira"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "authentication_failure"
+        },
+        {
+            "Name": "saas:okta",
+            "Channel": "Sign-in logs / audit events"
+        },
+        {
+            "Name": "saas:salesforce",
+            "Channel": "API login using access_token without login history"
+        },
+        {
+            "Name": "saas:salesforce",
+            "Channel": "Login"
+        },
+        {
+            "Name": "User Account",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4625"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4769, 1200, 1202"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4768, 4769, 4770"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4769"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4776, 4625"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4625, 4771, 4648"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4648"
+        }
+    ]
+}

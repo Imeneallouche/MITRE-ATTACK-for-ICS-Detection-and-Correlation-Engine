@@ -1,0 +1,183 @@
+{
+    "id": "DC0001",
+    "name": "Scheduled Job Creation",
+    "type": "DataComponent",
+    "description": "The establishment of a task or job that will execute at a predefined time or based on specific triggers. This mechanism is frequently used by adversaries for persistence to ensure malicious code runs automatically upon system startup or at specific intervals.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit",
+            "syslog",
+            "siem"
+        ],
+        "indicator_types": [
+            "string",
+            "command_line",
+            "user"
+        ],
+        "categories": [
+            "persistence",
+            "scheduled_task",
+            "execution",
+            "privilege_escalation"
+        ],
+        "fields": [
+            "TaskName",
+            "TaskContent",
+            "Action",
+            "Trigger",
+            "User",
+            "Command",
+            "EventID",
+            "Path"
+        ],
+        "keywords": [
+            "4698",
+            "4702",
+            "event id 106",
+            "schtasks",
+            "at.exe",
+            "taskeng.exe",
+            "cron",
+            "crontab",
+            "launchd",
+            "sysmon event 1"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4698",
+                    "description": "Scheduled Task Created; detects the creation of new scheduled tasks."
+                },
+                {
+                    "event_id": "4702",
+                    "description": "Scheduled Task Updated; identifies modifications to existing scheduled jobs."
+                },
+                {
+                    "event_id": "106",
+                    "source": "TaskScheduler Operational Log",
+                    "description": "Provides details about scheduled task execution."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "1",
+                    "description": "Process Creation; detects execution of suspicious tasks via specific binaries.",
+                    "binaries_monitored": [
+                        "schtasks.exe",
+                        "at.exe",
+                        "taskeng.exe"
+                    ]
+                }
+            ]
+        },
+        "linux_macos": {
+            "audit_framework": {
+                "tool": "AuditD",
+                "monitored_paths": [
+                    "/etc/cron*",
+                    "/var/spool/cron/",
+                    "crontab"
+                ],
+                "description": "Monitor modifications to cron files and directories."
+            },
+            "syslog": {
+                "path": "/var/log/cron",
+                "description": "Capture cron job execution logs."
+            },
+            "query_tools": {
+                "tool": "OSQuery",
+                "tables": [
+                    "crontab",
+                    "launchd"
+                ],
+                "description": "Query tables for scheduled job configurations."
+            }
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Track scheduled task creation and modification events."
+            ]
+        },
+        "siem_xdr_detection": {
+            "rules": [
+                "Monitor for scheduled jobs created by unusual users.",
+                "Detect tasks executing scripts from non-standard directories."
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "esxi:cron",
+            "Channel": "execution of scheduled job"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "task creation events"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "Startup script and task execution logs"
+        },
+        {
+            "Name": "kubernetes:apiserver",
+            "Channel": "verb=create, resource=cronjobs, group=batch"
+        },
+        {
+            "Name": "linux:cron",
+            "Channel": "Scheduled execution of unknown or unusual script/binary"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "crontab, systemd_timers"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "file_events"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Execution of non-standard script or binary by cron"
+        },
+        {
+            "Name": "macos:cron",
+            "Channel": "cron/launchd"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "launchd_jobs"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "file_events - cron, launchd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process: crontab edits, launch of cron job"
+        },
+        {
+            "Name": "Scheduled Job",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4698"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4699"
+        },
+        {
+            "Name": "WinEventLog:TaskScheduler",
+            "Channel": "EventCode=106"
+        }
+    ]
+}

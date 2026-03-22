@@ -1,0 +1,121 @@
+{
+    "id": "DC0012",
+    "name": "Scheduled Job Modification",
+    "type": "DataComponent",
+    "description": "Changes made to an existing scheduled job, including modifications to its execution parameters, command payload, or execution timing. Adversaries may modify legitimate existing tasks to execute malicious code, thereby blending in with normal system activity and establishing persistence.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "audit",
+            "file_integrity_monitoring",
+            "command_line"
+        ],
+        "indicator_types": [
+            "job_name",
+            "command_line",
+            "user",
+            "file_path"
+        ],
+        "categories": [
+            "persistence",
+            "defense_evasion",
+            "privilege_escalation"
+        ],
+        "fields": [
+            "TaskName",
+            "TaskContent",
+            "Action",
+            "NewCommand",
+            "OldCommand",
+            "User",
+            "EventID",
+            "Path"
+        ],
+        "keywords": [
+            "4702",
+            "event id 140",
+            "schtasks /change",
+            "crontab -e",
+            "task scheduler",
+            "auditd",
+            "write"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4702",
+                    "source": "Security",
+                    "description": "Scheduled Task Updated; identifies modifications to existing scheduled jobs."
+                },
+                {
+                    "event_id": "140",
+                    "source": "TaskScheduler Operational Log",
+                    "description": "Task updated; provides details on the changes made to the task definition."
+                }
+            ],
+            "command_line": {
+                "tool": "schtasks.exe",
+                "command": "schtasks /change ...",
+                "description": "Command-line tool used to modify existing task properties (e.g., /TR for task run, /RU for run as user)."
+            }
+        },
+        "linux_macos": {
+            "audit_framework": {
+                "tool": "AuditD",
+                "rules": [
+                    {
+                        "path": "/etc/crontab",
+                        "permissions": "wa",
+                        "key": "job_modification",
+                        "description": "Monitor write access to the system crontab file."
+                    },
+                    {
+                        "path": "/var/spool/cron/",
+                        "permissions": "wa",
+                        "key": "job_modification",
+                        "description": "Monitor write access to user cron spools."
+                    }
+                ]
+            },
+            "file_integrity_monitoring": {
+                "description": "Monitor changes to job configuration files.",
+                "paths": [
+                    "/etc/cron.d/",
+                    "/etc/cron.daily/",
+                    "/Library/LaunchDaemons/",
+                    "/Library/LaunchAgents/"
+                ]
+            },
+            "commands": {
+                "tool": "crontab",
+                "command": "crontab -e",
+                "description": "Edit the current user's crontab entries."
+            }
+        }
+    },
+    "log_sources": [
+        {
+            "name": "auditd:CONFIG_CHANGE",
+            "channel": "/var/log/audit/audit.log"
+        },
+        {
+            "name": "m365:exchange",
+            "channel": "Remove-InboxRule, Clear-Mailbox"
+        },
+        {
+            "name": "Scheduled Job",
+            "channel": "None"
+        },
+        {
+            "name": "WinEventLog:Security",
+            "channel": "EventCode=4702"
+        }
+    ]
+}

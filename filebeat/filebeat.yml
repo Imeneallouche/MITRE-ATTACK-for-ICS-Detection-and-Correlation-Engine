@@ -1,0 +1,265 @@
+filebeat.inputs:
+  - type: filestream
+    id: simulation-syslog
+    paths: ["/shared_logs/simulation/syslog"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "syslog"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-auth
+    paths: ["/shared_logs/simulation/auth.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "auth"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-kern
+    paths: ["/shared_logs/simulation/kern.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "kern"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-process-alarms
+    paths: ["/shared_logs/simulation/process_alarms/*"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "process_alarm"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-auth
+    paths: ["/shared_logs/plc/auth.log"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "auth"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-syslog
+    paths: ["/shared_logs/plc/syslog"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "syslog"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-daemon
+    paths: ["/shared_logs/plc/daemon.log"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "daemon"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-audit
+    paths: ["/shared_logs/plc/audit/*"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "audit"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-app
+    paths: ["/shared_logs/plc/plc_app/*"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "plc_app"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-kern
+    paths: ["/shared_logs/plc/kern.log"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "kern"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-auth
+    paths: ["/shared_logs/ews/auth.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "auth"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-syslog
+    paths: ["/shared_logs/ews/syslog"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "syslog"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-daemon
+    paths: ["/shared_logs/ews/daemon.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "daemon"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-audit
+    paths: ["/shared_logs/ews/audit/*"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "audit"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-kern
+    paths: ["/shared_logs/ews/kern.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "kern"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-cron
+    paths: ["/shared_logs/ews/cron.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "cron"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-pacct
+    paths: ["/shared_logs/ews/pacct"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "pacct"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-catalina
+    paths: ["/shared_logs/hmi/catalina/*.log"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "hmi_catalina"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-auth
+    paths: ["/shared_logs/hmi/auth.log"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "auth"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-syslog
+    paths: ["/shared_logs/hmi/syslog"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "syslog"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-audit
+    paths: ["/shared_logs/hmi/audit/*"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "audit"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-suricata-eve
+    paths: ["/shared_logs/router/eve.json"]
+    parsers:
+      - ndjson:
+          target: ""
+          add_error_key: true
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "suricata"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-syslog
+    paths: ["/shared_logs/router/syslog"]
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "syslog"
+    fields_under_root: true
+
+processors:
+  - add_host_metadata: ~
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info

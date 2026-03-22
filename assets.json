@@ -1,0 +1,60 @@
+{
+  "assets": [
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation",
+      "asset_ip": "192.168.95.10",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "plc",
+      "asset_name": "PLC Controller",
+      "asset_ip": "192.168.95.2",
+      "zone": "ics-net",
+      "role": "plc",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "ews",
+      "asset_name": "Engineering Workstation",
+      "asset_ip": "192.168.95.5",
+      "zone": "ics-net",
+      "role": "ews",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "hmi",
+      "asset_name": "HMI ScadaLTS",
+      "asset_ip": "192.168.90.107",
+      "zone": "dmz-net",
+      "role": "hmi",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "router",
+      "asset_name": "ICS Router/Firewall",
+      "asset_ip": "192.168.95.200",
+      "zone": "perimeter",
+      "role": "network-device",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "kali",
+      "asset_name": "Kali Attacker",
+      "asset_ip": "192.168.90.6",
+      "zone": "dmz-net",
+      "role": "attacker-simulation",
+      "is_ics_asset": false
+    },
+    {
+      "asset_id": "caldera",
+      "asset_name": "Caldera C2",
+      "asset_ip": "192.168.90.250",
+      "zone": "dmz-net",
+      "role": "c2-simulation",
+      "is_ics_asset": false
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+{
+    "id": "DC0102",
+    "name": "Network Share Access",
+    "type": "DataComponent",
+    "description": "Opening a network share, which makes the contents available to the requestor. This includes tracking access attempts, granular permission checks, and connections to shared resources over protocols like SMB, CIFS, or NFS.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "network"
+        ],
+        "log_source_types": [
+            "event_log",
+            "audit",
+            "endpoint",
+            "network_flow"
+        ],
+        "indicator_types": [
+            "ip",
+            "username",
+            "string"
+        ],
+        "categories": [
+            "network_share",
+            "file_access",
+            "lateral_movement",
+            "access_control"
+        ],
+        "fields": [
+            "EventID",
+            "ShareName",
+            "SharePath",
+            "SourceAddress",
+            "AccountName",
+            "AccessMask",
+            "AccessList",
+            "ObjectType"
+        ],
+        "keywords": [
+            "5140",
+            "5145",
+            "sysmon event 3",
+            "smb",
+            "cifs",
+            "nfs",
+            "auditpol",
+            "auditctl",
+            "lsof",
+            "mount",
+            "netstat",
+            "port 445"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "5140",
+                    "description": "Logs every access attempt to a network share."
+                },
+                {
+                    "event_id": "5145",
+                    "description": "Detailed Network Share Object Access (includes requesting user, source IP, permissions)."
+                },
+                {
+                    "event_id": "3",
+                    "source": "Sysmon",
+                    "description": "Network Connection Initiated; helps track SMB connections to suspicious shares."
+                }
+            ],
+            "configuration": {
+                "audit_policy": {
+                    "command": "auditpol /set /subcategory:\"File Share\" /success:enable /failure:enable",
+                    "description": "Enable Audit Policy for Network Share Access."
+                },
+                "powershell": {
+                    "command": "Set-ExecutionPolicy RemoteSigned",
+                    "description": "Enable PowerShell environment for logging/scripts to detect unauthorized SMB access."
+                },
+                "group_policy": {
+                    "path": "Computer Configuration → Windows Settings → Security Settings → Local Policies → User Rights Assignment",
+                    "setting": "Access this computer from the network",
+                    "action": "Restrict unauthorized accounts."
+                }
+            }
+        },
+        "linux_macos": {
+            "audit_framework": {
+                "tool": "AuditD",
+                "syscalls": [
+                    "open",
+                    "read",
+                    "write",
+                    "connect"
+                ],
+                "rule_example": "auditctl -a always,exit -F arch=b64 -S open -F path=/mnt/share -k network_share_access",
+                "description": "Detects access to NFS, CIFS, and SMB network shares."
+            },
+            "command_line_tools": [
+                {
+                    "tool": "lsof",
+                    "commands": [
+                        "lsof | grep nfs",
+                        "lsof | grep smb"
+                    ],
+                    "description": "Identifies active network share connections."
+                },
+                {
+                    "tool": "mount",
+                    "commands": [
+                        "mount | grep nfs",
+                        "mount | grep cifs"
+                    ],
+                    "description": "Lists currently mounted network shares."
+                },
+                {
+                    "tool": "netstat",
+                    "command": "netstat -an | grep :445",
+                    "description": "Monitor active network shares."
+                }
+            ]
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Detect abnormal network share access behavior.",
+                "Identify unusual account usage.",
+                "Monitor for large file transfers or encrypted file activity."
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "m365:unified",
+            "Channel": "FileUploaded, FileAccessed"
+        },
+        {
+            "Name": "Network Share",
+            "Channel": "None"
+        },
+        {
+            "Name": "NSM:Flow",
+            "Channel": "smb_files.log"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-SMBClient/Security",
+            "Channel": "EventCode=31001"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-SMBServer",
+            "Channel": "Access to SYSVOL share from non-admin user or unusual endpoints"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=5140"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=5145"
+        }
+    ]
+}

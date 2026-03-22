@@ -1,0 +1,292 @@
+{
+    "id": "DC0016",
+    "name": "Module Load",
+    "type": "DataComponent",
+    "description": "When a process or program dynamically attaches a shared library, module, or plugin into its memory space. This action is typically performed to extend the functionality of an application, access shared system resources, or interact with kernel-mode components.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "audit",
+            "siem"
+        ],
+        "indicator_types": [
+            "string",
+            "hash",
+            "signature"
+        ],
+        "categories": [
+            "module_load",
+            "process_injection",
+            "memory_forensics",
+            "process_execution"
+        ],
+        "fields": [
+            "ImageLoaded",
+            "Image",
+            "ProcessId",
+            "Hashes",
+            "Signed",
+            "Signature",
+            "syscall",
+            "library_path"
+        ],
+        "keywords": [
+            "dll",
+            "shared object",
+            ".so",
+            "sysmon event 7",
+            "event id 4688",
+            "auditd",
+            "execve",
+            "dlopen",
+            "volatility",
+            "rekall",
+            "procmon",
+            "malfind",
+            "ldrmodules"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "source": "Sysmon",
+                    "event_id": "7",
+                    "description": "Logs when a DLL is loaded into a process."
+                },
+                {
+                    "source": "Windows Security Event Log",
+                    "event_id": "4688",
+                    "description": "Captures process creation events, often useful for correlating module loads."
+                },
+                {
+                    "source": "Windows Defender ATP",
+                    "description": "Can provide visibility into suspicious module loads."
+                }
+            ]
+        },
+        "linux_macos": {
+            "audit_framework": {
+                "tool": "AuditD",
+                "syscalls": [
+                    "execve",
+                    "open"
+                ],
+                "description": "Captures when shared libraries (.so files) are loaded."
+            },
+            "tracing_tools": {
+                "tools": [
+                    "Ltrace",
+                    "Strace"
+                ],
+                "monitored_calls": [
+                    "dlopen",
+                    "execve"
+                ],
+                "description": "Monitors process behavior, including library calls."
+            },
+            "macos_specific": {
+                "framework": "Endpoint Security Framework (ESF)",
+                "event_type": "ES_EVENT_TYPE_NOTIFY_DYLD_INSERT_LIBRARIES",
+                "description": "Monitors library loads."
+            }
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Provide real-time telemetry on module loads and process injections."
+            ],
+            "tools": [
+                {
+                    "name": "Sysinternals Process Monitor (procmon)",
+                    "description": "Captures loaded modules and their execution context."
+                }
+            ]
+        },
+        "memory_forensics": {
+            "tools": [
+                {
+                    "name": "Volatility Framework",
+                    "plugins": [
+                        "malfind",
+                        "ldrmodules"
+                    ],
+                    "description": "Detects injected DLLs and anomalous module loads."
+                },
+                {
+                    "name": "Rekall Framework",
+                    "description": "Useful for kernel-mode module detection."
+                }
+            ]
+        },
+        "siem_and_log_analysis": {
+            "actions": [
+                "Centralized log aggregation to correlate suspicious module loads across the environment.",
+                "Detection rules using correlation searches and behavioral analytics."
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:file-events",
+            "Channel": "open of suspicious .so from non-standard paths"
+        },
+        {
+            "Name": "auditd:MMAP",
+            "Channel": "load: Loading of libzip.so, libz.so, or libbz2.so by processes not normally associated with archiving\n            "
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "openat/read/mmap: Open/mmap .so files from non-standard paths"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "LD_PRELOAD Logging"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "mmap"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "dmesg"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "module load or memory map path"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "unexpected module load"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "module load"
+        },
+        {
+            "Name": "ETW:LoadImage",
+            "Channel": "provider: ETW LoadImage events for images from user-writable/UNC paths"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-ImageLoad",
+            "Channel": "provider: Unsigned/user-writable image loads into msbuild.exe"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "select: Open files path LIKE '/tmp/%.so' OR '/dev/shm/%.so'"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "Dynamic Linking State"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "Process linked with libcrypto.so making external connections"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "Processes linked with libssl/libcrypto performing network activity"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "kmod"
+        },
+        {
+            "Name": "linux:Sysmon",
+            "Channel": "EventCode=7"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Non-standard Office startup component detected (e.g., unexpected DLL path)"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "ES_EVENT_TYPE_NOTIFY_KEXTLOAD"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "select: path LIKE '%/Library/%/*.dylib' OR '/tmp/*.dylib'"
+        },
+        {
+            "Name": "macos:syslog",
+            "Channel": "DYLD_INSERT_LIBRARIES anomalies"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "dyld/unified log entries indicating image load from non-system paths"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "dynamic loading of sleep-related functions or sandbox detection libraries"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "DYLD event subsystem"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process execution events with dylib load activity"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Process memory maps new dylib (dylib_load event)"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Dylib loaded from abnormal location"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Loading of libz.dylib, libarchive.dylib by non-standard applications"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "suspicious dlopen/dlsym usage in non-development processes"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "delay/sleep library usage in user context"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=com.apple.kextd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "loading of unexpected dylibs compared to historical baselines"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "launch and dylib load"
+        },
+        {
+            "Name": "Module",
+            "Channel": "None"
+        },
+        {
+            "Name": "snmp:status",
+            "Channel": "Status change in cryptographic hardware modules (enabled -&gt; disabled)"
+        },
+        {
+            "Name": "WinEventLog:Application",
+            "Channel": "CLR Assembly creation, loading, or modification logs via MSSQL CLR integration"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=3033"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=3063"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "EventCode=7"
+        }
+    ]
+}

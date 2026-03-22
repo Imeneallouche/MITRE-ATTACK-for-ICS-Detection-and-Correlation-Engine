@@ -1,0 +1,196 @@
+{
+    "id": "DC0041",
+    "name": "Service Metadata",
+    "type": "DataComponent",
+    "description": "Contextual data about a service or daemon, which may include information such as name, display name, service executable path, start type (auto/manual/disabled), and the user account under which it runs. This data reflects the current configuration and state of services on a system.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "command_output",
+            "registry",
+            "configuration_file"
+        ],
+        "indicator_types": [
+            "service_name",
+            "file_path",
+            "user"
+        ],
+        "categories": [
+            "system_inventory",
+            "persistence",
+            "privilege_escalation"
+        ],
+        "fields": [
+            "ServiceName",
+            "DisplayName",
+            "ImagePath",
+            "StartType",
+            "ServiceAccount",
+            "Status",
+            "ProcessId",
+            "Dependencies"
+        ],
+        "keywords": [
+            "sc query",
+            "get-service",
+            "systemctl",
+            "chkconfig",
+            "launchctl",
+            "plist",
+            "services.msc"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "commands": [
+                {
+                    "tool": "sc.exe",
+                    "command": "sc queryex type= service state= all",
+                    "description": "Displays detailed status for all services, including PID and exit codes."
+                },
+                {
+                    "tool": "PowerShell",
+                    "command": "Get-Service | Select-Object Name, DisplayName, Status, StartType, ServiceName",
+                    "description": "Retrieves service objects with status and configuration properties."
+                },
+                {
+                    "tool": "WMIC",
+                    "command": "wmic service get Name, StartName, PathName, StartMode, State",
+                    "description": "Queries WMI for service configuration details including the binary path."
+                }
+            ],
+            "registry": {
+                "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\",
+                "description": "Registry keys containing the static configuration (Image, Start Type, Account) for every service."
+            }
+        },
+        "linux": {
+            "systemd": {
+                "command": "systemctl list-units --type=service --all",
+                "description": "Lists all loaded service units and their active states."
+            },
+            "init_system": {
+                "command": "chkconfig --list",
+                "description": "Lists services and their runlevel configuration (for SysVinit systems)."
+            },
+            "files": {
+                "paths": [
+                    "/etc/systemd/system/",
+                    "/lib/systemd/system/",
+                    "/etc/init.d/"
+                ],
+                "description": "Service unit files and scripts defining metadata."
+            }
+        },
+        "macos": {
+            "launchd": {
+                "command": "launchctl list",
+                "description": "Lists loaded launchd jobs, their PIDs, and last exit status."
+            },
+            "files": {
+                "paths": [
+                    "/Library/LaunchDaemons/",
+                    "/Library/LaunchAgents/",
+                    "/System/Library/LaunchDaemons/"
+                ],
+                "description": "Property list (.plist) files defining service parameters."
+            }
+        },
+        "cross_platform": {
+            "tool": "OSQuery",
+            "table": "services",
+            "query": "SELECT name, path, start_type, status, user_account FROM services;",
+            "description": "Retrieves standardized service metadata across operating systems."
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:CONFIG_CHANGE",
+            "Channel": "delete: Modification of systemd unit files or config for security agents"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Stop VM or disable service events via vim-cmd"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "registers services with legitimate-sounding names"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Service events"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "seccomp or AppArmor profile changes"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "kubectl delete or patch of security pods/admission controllers"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "scheduled/real-time"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "service stopped messages"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "auditd service stopped or disabled"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Service restart with modified executable path"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "launchd"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "launchctl disable or bootout calls"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=com.apple.launchservices"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Observed loading of new LaunchAgent or LaunchDaemon plist"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Modification of system configuration profiles affecting security tools"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "write: Startup configuration changes disabling security checks"
+        },
+        {
+            "Name": "Service",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "EventCode=4"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=7035"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "Service stopped or RecoveryDisabled set via REAgentC"
+        },
+        {
+            "Name": "WinEventLog:WinRM",
+            "Channel": "EventCode=6"
+        }
+    ]
+}

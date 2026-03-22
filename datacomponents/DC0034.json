@@ -1,0 +1,281 @@
+{
+    "id": "DC0034",
+    "name": "Process Metadata",
+    "type": "DataComponent",
+    "description": "Contextual data about a running process, which may include information such as environment variables, image name, user/owner, command line arguments, and parent-child relationships. Unlike process creation events (which capture the moment of execution), process metadata often refers to the static or snapshot attributes of a process currently resident in memory.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "endpoint",
+            "command_output",
+            "snapshot"
+        ],
+        "indicator_types": [
+            "process_name",
+            "hash",
+            "user"
+        ],
+        "categories": [
+            "system_inventory",
+            "threat_hunting",
+            "anomaly_detection"
+        ],
+        "fields": [
+            "ProcessName",
+            "ProcessId",
+            "ParentProcessId",
+            "CommandLine",
+            "User",
+            "Path",
+            "Hash",
+            "IntegrityLevel",
+            "EnvironmentVariables"
+        ],
+        "keywords": [
+            "tasklist",
+            "get-process",
+            "ps aux",
+            "proc filesystem",
+            "wmic process",
+            "osquery",
+            "lsof"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "commands": [
+                {
+                    "tool": "tasklist",
+                    "command": "tasklist /v /fo csv",
+                    "description": "Lists running processes with metadata like memory usage, user context, and window title."
+                },
+                {
+                    "tool": "PowerShell",
+                    "command": "Get-Process | Select-Object Name, Id, Path, StartTime, MainWindowTitle",
+                    "description": "Retrieves rich object-based metadata for running processes."
+                },
+                {
+                    "tool": "WMIC",
+                    "command": "wmic process get Name, ProcessId, CommandLine, ParentProcessId",
+                    "description": "Queries WMI for specific process attributes."
+                }
+            ],
+            "sysinternals": {
+                "tool": "Process Explorer / Handle",
+                "description": "Advanced inspection of process handles, loaded DLLs, and security tokens."
+            }
+        },
+        "linux": {
+            "filesystem": {
+                "path": "/proc/[pid]/",
+                "files": [
+                    "cmdline (Command line arguments)",
+                    "environ (Environment variables)",
+                    "status (Runtime status, UID/GID)",
+                    "maps (Memory maps)"
+                ],
+                "description": "The proc filesystem provides a direct interface to kernel data structures for processes."
+            },
+            "commands": [
+                {
+                    "tool": "ps",
+                    "command": "ps auxww",
+                    "description": "Displays detailed process status, including owner, CPU/Mem usage, and full command line."
+                },
+                {
+                    "tool": "lsof",
+                    "command": "lsof -p <pid>",
+                    "description": "Lists open files and network connections associated with a process."
+                }
+            ]
+        },
+        "cross_platform_query": {
+            "tool": "OSQuery",
+            "table": "processes",
+            "query": "SELECT pid, name, path, cmdline, uid, parent, on_disk FROM processes;",
+            "description": "SQL-based query to retrieve structured metadata across Windows, Linux, and macOS."
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve call for sudo where euid != uid"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Use of fork/exec with DISPLAY unset or redirected"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve, prctl, or ptrace activity affecting process memory or command-line arguments"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve with UID ≠ EUID"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve with escalated privileges"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "cross-account or unexpected assume role"
+        },
+        {
+            "Name": "containerd:events",
+            "Channel": "Docker or containerd image pulls and process executions"
+        },
+        {
+            "Name": "EDR:hunting",
+            "Channel": "Correlation of\n                signer info, parent-child lineage, rare invocation context (user host\n                role), and API surfaces (CreateProcess*, LoadLibrary*)"
+        },
+        {
+            "Name": "EDR:Telemetry",
+            "Channel": "Process lineage and API usage enrichment (GetSystemTime, GetTimeZoneInformation, NtQuerySystemTime)"
+        },
+        {
+            "Name": "esxi:auth",
+            "Channel": "user session"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "/var/log/hostd.log API calls reading/altering time/ntp settings"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-ClickOnce",
+            "Channel": "provider: Event Tracing for Windows (ETW) events associated with ClickOnce deployment (dfsvc.exe\n                activity)"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Process",
+            "Channel": "process_start: EventHeader.ProcessId true parent vs reported PPID mismatch"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "Cross-reference argv[0] with actual executable path and parent process metadata"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "select: path LIKE '/dev/video%'"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "state=attached/debugged"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "process metadata mismatch between /proc and runtime attributes"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "process environment variables containing LD_PRELOAD"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sudo or service accounts invoking loaders with suspicious env vars"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Kernel or daemon warnings of downgraded TLS or cryptographic settings"
+        },
+        {
+            "Name": "macos:endpointsecurity",
+            "Channel": "ES_EVENT_TYPE_NOTIFY_EXEC, ES_EVENT_TYPE_NOTIFY_MMAP"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "Process Context"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "Process Execution + Hash"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=com.apple.process"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=com.apple.TCC"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "exec of binary with setuid/setgid and EUID != UID"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Code Execution &amp; Entitlement Access"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Process opening SSH_AUTH_SOCK or /tmp/ssh-* socket not owned by same UID"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "code signature/memory protection"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log collect from launchd and process start"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Modifications or writes to EFI system partition for downgraded bootloaders"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "non-shell process tree accessing bash history"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Admin activity"
+        },
+        {
+            "Name": "Process",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:AppLocker",
+            "Channel": "AppLocker audit/blocks showing developer utilities executing scripts/binaries outside policy"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-CodeIntegrity/Operational",
+            "Channel": "CodeIntegrity/WDAC events indicating unsigned/invalid DLL loads"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-CodeIntegrity/Operational",
+            "Channel": "Unsigned/invalid signature modules or images loaded by msbuild.exe or its children"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-CodeIntegrity/Operational",
+            "Channel": "Unsigned or untrusted modules loaded during JamPlus.exe runtime"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-DeviceGuard/Operational",
+            "Channel": "WDAC policy audit/block affecting msbuild.exe spawned payloads"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-Security-Mitigations/KernelMode",
+            "Channel": "ETW telemetry indicating ClickOnce deployment (dfsvc.exe) launching payloads"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-SmartAppControl/Operational",
+            "Channel": "Smart App Control decisions (audit/block) for msbuild.exe-launched executables"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-Windows Camera Frame Server/Operational",
+            "Channel": "Process session start/stop events for camera pipeline by unexpected executables"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "EventCode=400, 403"
+        }
+    ]
+}

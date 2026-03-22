@@ -1,0 +1,1374 @@
+{
+    "id": "DC0064",
+    "name": "Command Execution",
+    "type": "DataComponent",
+    "description": "Command Execution involves monitoring and capturing the execution of textual commands (including shell commands, cmdlets, and scripts) within an operating system or application. These commands may include arguments or parameters and are typically executed through interpreters such as `cmd.exe`, `bash`, `zsh`, `PowerShell`, or programmatic execution.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "kubernetes",
+            "container",
+            "cloud"
+        ],
+        "log_source_types": [
+            "event_log",
+            "audit",
+            "endpoint",
+            "siem",
+            "container_log",
+            "syslog"
+        ],
+        "indicator_types": [
+            "string",
+            "regex",
+            "signature",
+            "username"
+        ],
+        "categories": [
+            "process_creation",
+            "script_execution",
+            "audit_logging",
+            "container_management"
+        ],
+        "fields": [
+            "CommandLine",
+            "ProcessName",
+            "EventID",
+            "User",
+            "Host",
+            "ScriptBlockText",
+            "syscall",
+            "exe",
+            "args"
+        ],
+        "keywords": [
+            "cmd.exe",
+            "powershell",
+            "bash",
+            "zsh",
+            "4688",
+            "4104",
+            "execve",
+            "docker exec",
+            "kubectl exec",
+            "osascript",
+            "dscl",
+            "sysmon"
+        ]
+    },
+    "command_interpreters": [
+        "cmd.exe",
+        "bash",
+        "zsh",
+        "PowerShell",
+        "sh",
+        "ksh",
+        "tcsh",
+        "csh",
+        "dash"
+    ],
+    "execution_examples": {
+        "windows_cmd": [
+            {
+                "command": "dir",
+                "description": "Lists directory contents."
+            },
+            {
+                "command": "net user",
+                "description": "Queries or manipulates user accounts."
+            },
+            {
+                "command": "tasklist",
+                "description": "Lists running processes."
+            }
+        ],
+        "powershell": [
+            {
+                "command": "Get-Process",
+                "description": "Retrieves processes running on a system."
+            },
+            {
+                "command": "Set-ExecutionPolicy",
+                "description": "Changes PowerShell script execution policies."
+            },
+            {
+                "command": "Invoke-WebRequest",
+                "description": "Downloads remote resources."
+            }
+        ],
+        "linux_shell": [
+            {
+                "command": "ls",
+                "description": "Lists files in a directory."
+            },
+            {
+                "command": "cat /etc/passwd",
+                "description": "Reads the user accounts file."
+            },
+            {
+                "pattern": "curl https?://[a-zA-Z0-9.-]+",
+                "description": "Retrieves content from a remote URL."
+            }
+        ],
+        "container_environments": [
+            {
+                "command": "docker exec",
+                "description": "Executes a command inside a running container."
+            },
+            {
+                "command": "kubectl exec",
+                "description": "Runs commands in Kubernetes pods."
+            }
+        ],
+        "macos_terminal": [
+            {
+                "command": "open",
+                "description": "Opens files or URLs."
+            },
+            {
+                "command": "dscl . -list /Users",
+                "description": "Lists all users on the system."
+            },
+            {
+                "command": "osascript -e",
+                "description": "Executes AppleScript commands."
+            }
+        ]
+    },
+    "collection_measures": {
+        "logging_enablement": [
+            {
+                "platform": "windows",
+                "mechanism": "PowerShell Script Block Logging",
+                "configuration": {
+                    "commands": [
+                        "Set-ExecutionPolicy Bypass",
+                        "Set-ItemProperty -Path \"HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging\" -Name EnableScriptBlockLogging -Value 1"
+                    ]
+                }
+            },
+            {
+                "platform": "windows",
+                "mechanism": "Windows Event Logging",
+                "events": [
+                    {
+                        "event_id": "4688",
+                        "description": "Tracks process creation, including command-line arguments."
+                    },
+                    {
+                        "event_id": "4104",
+                        "description": "Logs PowerShell script block execution."
+                    }
+                ]
+            },
+            {
+                "platform": "linux",
+                "mechanism": "Shell History Logging",
+                "configuration": {
+                    "files": [
+                        ".bashrc",
+                        ".zshrc"
+                    ],
+                    "commands": [
+                        "export HISTTIMEFORMAT=\"%d/%m/%y %T \"",
+                        "export PROMPT_COMMAND='history -a; history -w'"
+                    ]
+                }
+            },
+            {
+                "platform": "macos",
+                "mechanism": "Shell History Logging",
+                "configuration": {
+                    "files": [
+                        ".bashrc",
+                        ".zshrc"
+                    ],
+                    "commands": [
+                        "export HISTTIMEFORMAT=\"%d/%m/%y %T \"",
+                        "export PROMPT_COMMAND='history -a; history -w'"
+                    ]
+                }
+            },
+            {
+                "platform": "linux",
+                "mechanism": "Audit Framework",
+                "tool": "auditd",
+                "rule_example": "-a always,exit -F arch=b64 -S execve -k cmd_exec",
+                "target_syscall": "execve"
+            },
+            {
+                "platform": "container",
+                "mechanism": "Runtime Logging",
+                "tools": [
+                    "Docker --log-driver",
+                    "Kubernetes Audit Logs"
+                ]
+            }
+        ],
+        "centralized_logging": {
+            "mechanisms": [
+                "SIEM (e.g., Splunk)",
+                "Cloud-based log aggregation (AWS CloudWatch, Azure Monitor)"
+            ],
+            "search_examples": [
+                {
+                    "query_type": "splunk",
+                    "query": "index=windows EventID=4688 CommandLine=*"
+                }
+            ]
+        },
+        "advanced_logging": [
+            {
+                "tool": "Sysmon",
+                "platform": "windows",
+                "events": [
+                    {
+                        "event_id": "1",
+                        "description": "Logs process creation with command-line arguments."
+                    }
+                ]
+            },
+            {
+                "tool": "EDR",
+                "platform": "generic",
+                "description": "Monitor command executions via Endpoint Detection and Response solutions."
+            }
+        ]
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:CONFIG_CHANGE",
+            "Channel": "udev rule reload or trigger command executed"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Use of mv or cp to rename files with '.' prefix"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "execve: Execution of update-ca-certificates or trust anchor modification commands"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "gcore, gdb, strings, hexdump execution"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Execution of auditctl, systemctl stop auditd, or kill -9 auditd"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "execution of systemctl with subcommands start, stop, enable, disable"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Execution of GUI-related binaries with suppressed window/display flags"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "curl -X POST, wget --post-data"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "command line arguments containing lsblk, fdisk, parted"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "exec: Execution of dd, efibootmgr, or flashrom modifying firmware/boot partitions"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "curl -d, wget --post-data"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "grep/cat/awk on files with password fields"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "git push, curl -X POST"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Execution of gsettings set org.gnome.login-screen disable-user-list true"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "execution of setfattr or getfattr commands"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Process execution of update-ca-certificates or openssl with suspicious arguments"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "Execution of chattr to set +i or +a attributes"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "curl or wget with POST/PUT options"
+        },
+        {
+            "Name": "auditd:EXECVE",
+            "Channel": "curl -T, rclone copy"
+        },
+        {
+            "Name": "auditd:PROCTITLE",
+            "Channel": "proctitle contains chmod, chown, setfacl, or attr commands with suspicious parameters"
+        },
+        {
+            "Name": "auditd:PROCTITLE",
+            "Channel": "proctitle contains chmod, chown, chgrp, setfacl, or attr with suspicious parameters (777, 755, +x, -R)\n            "
+        },
+        {
+            "Name": "auditd:PROCTITLE",
+            "Channel": "process title records containing discovery command sequences and environmental assessment patterns"
+        },
+        {
+            "Name": "auditd:PROCTITLE",
+            "Channel": "command-line execution patterns for system discovery utilities (uname, hostname, ifconfig, netstat,\n                lsof, ps, mount)"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execution of realmd, samba-tool, or ldapmodify with user-related arguments"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Execution of script interpreters by systemd timer (ExecStart)"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Commands like systemctl stop , service  stop, or kill -9 \n                    \n                \n            "
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve calls to locale, timedatectl, or cat /etc/timezone"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "sleep function usage or loops (nanosleep, usleep) in scripts"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "connect, execve, write"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve call including 'nohup' or trailing '&amp;'"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "None"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Commands executed within an SSH session where no matching logon/authentication event exists"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "chmod, execve"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: iptables, nft, firewall-cmd modifications"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Invocation of scp, rsync, curl, or sftp"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve calls modifying local mail filter configuration files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: process_name IN (\"virsh\", \"VBoxManage\", \"qemu-img\") AND command IN (\"list\", \"info\")"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: service stop syslog, systemctl stop rsyslog, kill -9 syslog"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: openssl pkcs12, certutil, keytool"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Process in container namespace executes curl|wget|bash|sh|python|nc with outbound args"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execution of systemctl or service with enable/start parameters"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of cat, less, grep, journalctl targeting log directories (/var/log/)"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of python, perl, or custom binaries invoking compression libraries"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve, USER_CMD"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "bash/zsh of base64, tar, gzip, or openssl immediately after file write"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Processes executing sendmail/postfix with forged headers"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of tar, gzip, bzip2, xz, zip, or openssl with compression/encryption arguments"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "promiscuous mode transitions (ioctl or ifconfig)"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "chattr, rm, shred, dd run on recovery directories or partitions"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of curl or wget writing files to /tmp/* followed by chmod or execution"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of downgraded interpreters such as python2 or forced fallback commands"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Command line arguments including SPApplicationsDataType"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Execution of spoofing tools (e.g., hping3, nping, scapy) sending UDP packets to known amplifier ports\n            "
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execution of tools like cat, grep, or awk on credential files"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve of curl, rsync, wget with internal knowledge base or IPs"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of systemctl, loginctl, or systemd-inhibit commands related to sleep/hibernate"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Execution of xev, xdotool, or input activity emulators"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of interpreters creating archive-like outputs without calling tar/gzip"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "Execution of insmod, modprobe, or rmmod commands by non-standard users or outside expected timeframes\n            "
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve syscalls for discovery commands (uname, hostname, id, whoami, ps, netstat, mount) with\n                command-line parameter analysis"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of curl, wget, or custom scripts accessing financial endpoints"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of tar, gzip, bzip2, or openssl with output redirection"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve=/sbin/shutdown or /sbin/reboot"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve calls modifying HISTFILE or HISTCONTROL via unset/export"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve calls to /usr/bin/locale or shell execution of $LANG"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execution of systemctl or service with enable/start/modify"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "execve: Execution of lsmod, modinfo, or cat /proc/modules"
+        },
+        {
+            "Name": "auditd:USER_CMD",
+            "Channel": "USER_CMD"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "InvokeFunction"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "eventName: RunInstances, CreateUser, PutRolePolicy, InvokeCommand"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "SSM RunCommand"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "GetLogEvents: High frequency log exports from CloudWatch or equivalent services"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "command-line execution invoking credential enumeration"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "ssm:GetCommandInvocation"
+        },
+        {
+            "Name": "AWS:CloudTrail",
+            "Channel": "SendCommand, StartSession, ExecuteCommand: Unexpected AWS Systems Manager command execution targeting\n                EC2 instances"
+        },
+        {
+            "Name": "azure:activity",
+            "Channel": "Intune PowerShell Scripts"
+        },
+        {
+            "Name": "azure:signinlogs",
+            "Channel": "OperationName=SetDomainAuthentication OR Update-MsolFederatedDomain"
+        },
+        {
+            "Name": "Command",
+            "Channel": "None"
+        },
+        {
+            "Name": "docker:api",
+            "Channel": "docker logs access or container inspect commands from non-administrative users"
+        },
+        {
+            "Name": "docker:daemon",
+            "Channel": "docker exec or docker run with unexpected command/entrypoint"
+        },
+        {
+            "Name": "docker:events",
+            "Channel": "container exec rm|container stop --force"
+        },
+        {
+            "Name": "ebpf:syscalls",
+            "Channel": "useradd or /etc/passwd modified inside container"
+        },
+        {
+            "Name": "EDR:AMSI",
+            "Channel": "None"
+        },
+        {
+            "Name": "EDR:cli",
+            "Channel": "Command Line Telemetry"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "command execution"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "/var/log/hostd.log"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "modification of config files or shell command execution"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "shell access or job registration"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "logline inspection"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "esxcli network firewall set commands"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "event stream"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "scp/ssh used to move file across hosts"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "None"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "esxcli system syslog config set or reload"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "command log"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Execution of '/bin/vmx' or modifications to '/etc/rc.local.d/local.sh'"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "Command Execution"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "remote CLI + vim-cmd logging"
+        },
+        {
+            "Name": "esxi:hostd",
+            "Channel": "execution + payload hints"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "snapshot create/copy, esxcli"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "interactive shell"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "/var/log/shell.log"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "invoked remote scripts (esxcli)"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "base64 or gzip use within shell session"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "scripts or binaries with misleading names"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "/var/log/shell.log entries containing \"esxcli system clock get\""
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "None"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "command IN (\"esxcli vm process list\", \"vim-cmd vmsvc/getallvms\")"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "openssl|tar|dd"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "Execution of cat, tail, grep targeting /var/log/vmkernel.log or /var/log/hostd.log"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "CLI usage logs"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "Command execution trace"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "shell command execution for chmod, chown, or file permission modification on VMFS or system files"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "esxcli system syslog config set --loghost='' or stopping hostd service"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "Shell Access/Command Execution"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "esxcli software vib list"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "/root/.ash_history"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "mv, rename, or chmod commands moving VM files into hidden directories"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "`esxcli software vib install` with `--force` or `--no-sig-check` from shell history or `shell.log`"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "CLI session activity"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "esxcli system shutdown or reboot invoked"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "shell command execution for system discovery (vim-cmd, esxcli, vmware-cmd) targeting VM inventory and\n                host configuration"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "unset HISTFILE or HISTFILESIZE modifications"
+        },
+        {
+            "Name": "esxi:syslog",
+            "Channel": "boot logs"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "/var/log/vmkernel.log"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "DCUI shell start, BusyBox activity"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "esxcli system account add"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "Unexpected restarts of management agents or shell access"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "esxcli, vim-cmd invocation"
+        },
+        {
+            "Name": "esxi:vobd",
+            "Channel": "shell session start"
+        },
+        {
+            "Name": "esxi:vpxd",
+            "Channel": "vCenter Management"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "file system activity monitor"
+        },
+        {
+            "Name": "fs:fsusage",
+            "Channel": "access to BPF devices or interface IOCTLs"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "None"
+        },
+        {
+            "Name": "gcp:audit",
+            "Channel": "methodName: setIamPolicy, startInstance, createServiceAccount"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "Shell process (e.g.,\n                /bin/sh, /bin/bash) spawned in a container without an interactive\n                session attached (i.e., automation anomaly)"
+        },
+        {
+            "Name": "kubernetes:audit",
+            "Channel": "process execution involving curl, grep, or awk on secrets"
+        },
+        {
+            "Name": "linus:syslog",
+            "Channel": "None"
+        },
+        {
+            "Name": "linux:cli",
+            "Channel": "command logging"
+        },
+        {
+            "Name": "linux:cli",
+            "Channel": "Shell history logs"
+        },
+        {
+            "Name": "linux:cli",
+            "Channel": "Terminal Command History"
+        },
+        {
+            "Name": "linux:cli",
+            "Channel": "/home/*/.bash_history"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "Command-line includes base64 -d or openssl enc -d"
+        },
+        {
+            "Name": "linux:osquery",
+            "Channel": "process_events.command_line"
+        },
+        {
+            "Name": "linux:shell",
+            "Channel": "Manual invocation of software enumeration commands via interactive shell"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "cron activity"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Suspicious script or command execution targeting browser folders"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Unusual outbound transfers from CLI tools like base64, gzip, or netcat"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sudo chage|grep pam_pwquality|cat /etc/login.defs"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sudo execution of ffmpeg/gst-launch/v4l2-ctl by non-standard user"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "sshd logs"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "CLI access to 'show running-config', 'show password', or 'cat config.txt'"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Sudo or root escalation followed by filesystem mount commands"
+        },
+        {
+            "Name": "linuxsyslog",
+            "Channel": "nslcd or winbind logs"
+        },
+        {
+            "Name": "m365:defender",
+            "Channel": "Activity Log: Command Invocation"
+        },
+        {
+            "Name": "m365:exchange",
+            "Channel": "Cmdlet: Get-GlobalAddressList, Get-Recipient"
+        },
+        {
+            "Name": "m365:exchange",
+            "Channel": "Get-RoleGroup, Get-DistributionGroup"
+        },
+        {
+            "Name": "m365:messagetrace",
+            "Channel": "Inbound email triggers execution of mailbox-stored custom form"
+        },
+        {
+            "Name": "m365:messagetrace",
+            "Channel": "Inbound email matches crafted rule trigger pattern tied to persistence logic"
+        },
+        {
+            "Name": "m365:messagetrace",
+            "Channel": "Inbound email triggering Outlook to auto-access folder tied to malicious Home Page"
+        },
+        {
+            "Name": "m365:office",
+            "Channel": "Startup execution includes non-default component"
+        },
+        {
+            "Name": "m365:office",
+            "Channel": "Execution of unsigned macro from template"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Automated forwarding or file sync initiated by a logic app"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Search-Mailbox, Get-MessageTrace, eDiscovery requests"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Set-Mailbox, New-InboxRule"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Set-Mailbox, Set-MailboxPolicy, Set-TrustedLocation"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "Interpreter exec with suspicious arguments as above"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "launchd + process_events"
+        },
+        {
+            "Name": "macos:syslog",
+            "Channel": "system.log"
+        },
+        {
+            "Name": "macos:syslog",
+            "Channel": "/var/log/system.log"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "dsconfigad or dscl with create or append options for AD-bound users"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "launchctl unload, kill, or pkill commands affecting daemons or background services"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "execution of security-agent detection or enumeration commands"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of chflags hidden or SetFile -a V"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "defaults read -g AppleLocale, systemsetup -gettimezone"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "profiles install -type=configuration"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate 'eventMessage contains \"loginwindow\" or \"pfctl\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "exec or sudo usage with NOPASSWD context or echo modifying sudoers"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of /usr/bin/security add-trusted-cert or keychain modifications to System.keychain"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "nohup, disown, or osascript execution patterns"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of 'profiles install -type=configuration'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem:com.apple.Terminal"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "base64 or curl processes chained within short execution window"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "exec: Invocation of /usr/bin/defaults write or /usr/bin/plutil modifying plist keys"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "chmod command with arguments including '+s', 'u+s', or numeric values 4000-6777"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "command includes dscl . delete or sysadminctl --deleteUser"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "DS daemon log entries"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "diskutil eraseDisk / asr restore with destructive flags"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "pfctl -d, socketfilterfw --setglobalstate off, or modifications to com.apple.alf"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "pwpolicy|PasswordPolicy"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Command line contains smbutil view //, mount_smbfs //"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log messages related to disk enumeration context or Terminal session"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "defaults write com.apple.system.logging or logd manipulation"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process calling security find-certificate, export, or import"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of log show, fs_usage, or cat targeting system.log"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "execution of launchctl load/unload/start commands"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "base64 -d or osascript invoked on staged file"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "diskutil partitionDisk or eraseVolume with partition scheme modifications"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "grep/cat on files matching credential patterns"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "diskutil eraseDisk/zeroDisk or asr restore with destructive flags"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "spctl --master-disable, csrutil disable, or defaults write to disable Gatekeeper"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process: at, job runner"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of dscl . create with IsHidden=1"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate 'processImagePath contains \"zip\" OR \"base64\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "xattr utility execution with -w or -p flags"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "execution of 'security', 'cat', or 'grep' commands accessing credential storage"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "launchctl load or boot-time plist registration"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "dscl -create"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "kextload execution from Terminal or suspicious paths"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "xattr -d com.apple.quarantine or similar removal commands"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Security framework operations including keychain access, cryptographic operations, and certificate\n                validation"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "None"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of chflags hidden or setfile -a V"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "process:spawn, process:exec"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "csrutil disable"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log show --predicate 'process == '\n            "
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of launchctl with setenv or bootout targeting TCC.db or AppleScript under Finder context"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "command execution triggered by emond (e.g., shell, curl, python)"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Set or unset HIST* variables in shell environment"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "defaults read -g AppleLocale or systemsetup -gettimezone"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "launchctl load/unload or plist file modification"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "dscl . -create"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Execution of commands like `ls -l@`, `xattr -l`, or custom tools interacting with resource forks"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "CLI command"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Policy Update"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "ip ssh pubkey-chain"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "erase flash:, erase startup-config, format disk"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "CLI command logs"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "cmd: cmd=show clock detail"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of commands to load, copy, or replace system images (e.g., 'copy tftp flash', 'boot system')\n            "
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "None"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of commands like 'show running-config', 'copy running-config', or 'export config'"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of CLI commands altering crypto parameters (e.g., 'crypto key generate rsa modulus 512')"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "format flash:, format disk, reformat commands"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "erase flash:, erase nvram:, format disk"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "command logs"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "command logging"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Interface commands"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of privileged commands such as 'copy tftp flash', 'boot system', or 'debug memory'"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of commands disabling crypto hardware acceleration (e.g., 'no crypto engine enable')"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "shell command"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Commands like 'no logging' or equivalents that disable session history"
+        },
+        {
+            "Name": "networkdevice:cli",
+            "Channel": "Execution of commands such as 'copy tftp flash', 'boot system ', 'reload'"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "PKI export or certificate manipulation commands"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "Configuration changes referencing 'boot system tftp' or modification of startup-config pointing to\n                external TFTP servers"
+        },
+        {
+            "Name": "networkdevice:Firewall",
+            "Channel": "Audit trail or CLI/API access indicating commands like no access-list, delete rule-set, clear config\n            "
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Command Audit / Configuration Change"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "eventlog"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "command_exec"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "command-exec: CLI commands containing \"show clock\", \"show clock detail\", \"show timezone\" executed by\n                suspicious user/source"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "cmd='show aaa*' OR 'show running-config | include password|aaa' OR 'show aaa common-criteria policy all'\n            "
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "CLI command audit"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "system boot logs"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "exec command='monitor capture'"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "no logging buffered, no aaa new-model, disable firewall"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "interactive shell logging"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "command sequence: erase → format → reload"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "CLI Command Logging"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "CLI Command Audit"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "command audit"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Privilege-level command execution"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Detected CLI command to export key material"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "reload command issued"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "syslog facility LOCAL7 or trap messages"
+        },
+        {
+            "Name": "saas:PRMetadata",
+            "Channel": "Commit message or branch name contains encoded strings or payload indicators"
+        },
+        {
+            "Name": "vpxd.log",
+            "Channel": "VM inventory queries and configuration enumeration through vCenter API calls"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Office-Alerts",
+            "Channel": "Unexpected DLL or component loaded at Office startup"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Office-Alerts",
+            "Channel": "Office application warning or alert on macro execution from template"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Office/OutlookAddinMonitor",
+            "Channel": "Outlook loading add-in via unexpected load path or non-default profile context"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Get-ADTrust|GetAllTrustRelationships"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "EventCode=4103, 4104, 4105, 4106"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Execution of Microsoft script to enumerate custom forms in Outlook mailbox"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "CommandLine=copy-item or robocopy from UNC path"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "PowerShell launched from outlook.exe or triggered without user invocation"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Execution of PowerShell script to enumerate or remove malicious Home Page folder config"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Exchange Cmdlets"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "CmdletName: Get-Recipient, Get-User"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Execution of 'Get-WmiObject Win32_Product' or similar PowerShell cmdlets"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Execution of PowerShell without -NoProfile flag"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "EventCode=4101"
+        },
+        {
+            "Name": "WinEventLog:Security",
+            "Channel": "EventCode=4103, 4104, 4105, 4106"
+        }
+    ]
+}

@@ -1,0 +1,163 @@
+{
+    "id": "DC0046",
+    "name": "Drive Modification",
+    "type": "DataComponent",
+    "description": "The alteration of a drive letter, mount point, or other attributes of a data storage device, which could involve reassignment, renaming, permissions changes, or other modifications.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos",
+            "cloud",
+            "network"
+        ],
+        "log_source_types": [
+            "event_log",
+            "audit",
+            "syslog",
+            "endpoint",
+            "siem"
+        ],
+        "indicator_types": [
+            "string",
+            "regex"
+        ],
+        "categories": [
+            "storage_management",
+            "configuration_change",
+            "permission_change"
+        ],
+        "fields": [
+            "EventID",
+            "DriveLetter",
+            "MountPoint",
+            "VolumeLabel",
+            "Permissions",
+            "OldPath",
+            "NewPath"
+        ],
+        "keywords": [
+            "drive letter reassignment",
+            "mount point change",
+            "permission modification",
+            "auditctl",
+            "diskutil",
+            "storage-tiering",
+            "event id 98",
+            "event id 1006",
+            "dmesg",
+            "journalctl"
+        ]
+    },
+    "modification_scenarios": [
+        {
+            "type": "Drive Letter Reassignment",
+            "description": "A USB drive previously assigned a specific letter is reassigned to another.",
+            "example_pattern": "[A-Z]:\\ -> [A-Z]:\\"
+        },
+        {
+            "type": "Mount Point Change",
+            "description": "A mounted storage device is moved to a new directory path.",
+            "example_pattern": "/mnt/[old_path] -> /mnt/[new_path]"
+        },
+        {
+            "type": "Drive Permission Changes",
+            "description": "A shared drive's permissions are modified to allow different access levels (e.g., write access)."
+        },
+        {
+            "type": "Renaming of a Drive",
+            "description": "A network drive label is renamed.",
+            "example_pattern": "\"[Old_Label]\" -> \"[New_Label]\""
+        },
+        {
+            "type": "Modification of Cloud-Integrated Drives",
+            "description": "Modification of sync settings for cloud storage mounts."
+        }
+    ],
+    "collection_measures": {
+        "windows_event_logs": {
+            "events": [
+                {
+                    "event_id": "98",
+                    "description": "Indicates changes to a volume (e.g., drive letter reassignment)."
+                },
+                {
+                    "event_id": "1006",
+                    "description": "Logs permission modifications or changes to removable storage."
+                }
+            ],
+            "configuration": {
+                "log_path": "Applications and Services Logs > Microsoft > Windows > Storage-Tiering > Operational",
+                "action": "Enable 'Storage Operational Logs'"
+            }
+        },
+        "linux_system_logs": {
+            "audit_configuration": {
+                "command": "auditctl -w /mnt/ -p w -k drive_modification",
+                "description": "Add audit rules to track changes to mounted drives."
+            },
+            "command_line_monitoring": [
+                "dmesg",
+                "journalctl"
+            ]
+        },
+        "macos_system_logs": {
+            "unified_logs": {
+                "command": "log show --info | grep \"Volume modified\"",
+                "description": "Collect mount or drive modification events."
+            },
+            "command_line_monitoring": [
+                "diskutil"
+            ]
+        },
+        "endpoint_detection_response": {
+            "action": "Configure policies to monitor and log changes to drive configurations or attributes."
+        },
+        "siem_tools": {
+            "action": "Aggregate logs from multiple systems to correlate events and alert on suspicious drive modification activities.",
+            "example_tool": "Splunk"
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "Drive",
+            "Channel": "None"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "Block device write errors or unusual bootloader activity"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "IOKit disk write calls targeting raw devices"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "IOKit raw disk write to EFI/boot partition sectors"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "IOKit raw disk write activity targeting physical devices"
+        },
+        {
+            "Name": "networkdevice:firmware",
+            "Channel": "Unexpected firmware image upload events via TFTP/FTP/SCP"
+        },
+        {
+            "Name": "networkdevice:runtime",
+            "Channel": "Firmware image uploaded via TFTP/FTP/SCP"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "Raw disk write access via \\\\.\\PhysicalDrive* or \\\\.\\C:"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "Raw write attempts targeting \\\\.\\PhysicalDrive0 or sector 0 (MBR/partition table)"
+        },
+        {
+            "Name": "WinEventLog:Sysmon",
+            "Channel": "Raw disk writes targeting \\\\.\\PhysicalDrive* or MBR locations"
+        }
+    ]
+}

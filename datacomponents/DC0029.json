@@ -1,0 +1,242 @@
+{
+    "id": "DC0029",
+    "name": "Script Execution",
+    "type": "DataComponent",
+    "description": "The execution of a text file that contains code via the interpreter. Adversaries often use scripting languages (like PowerShell, VBScript, or Bash) to execute commands, download payloads, or modify system configurations while evading standard executable detection.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "macos"
+        ],
+        "log_source_types": [
+            "event_log",
+            "endpoint",
+            "script_log",
+            "siem"
+        ],
+        "indicator_types": [
+            "command_line",
+            "script_content",
+            "hash"
+        ],
+        "categories": [
+            "execution",
+            "defense_evasion",
+            "command_and_control"
+        ],
+        "fields": [
+            "ScriptBlockText",
+            "CommandLine",
+            "ProcessName",
+            "ParentProcessName",
+            "User",
+            "EventID",
+            "Path"
+        ],
+        "keywords": [
+            "4104",
+            "4688",
+            "5861",
+            "powershell",
+            "wscript",
+            "cscript",
+            "amsi",
+            "encodedcommand",
+            "iex",
+            "iwr",
+            "sysmon event 1",
+            "sysmon event 11"
+        ]
+    },
+    "collection_measures": {
+        "windows": {
+            "event_logs": [
+                {
+                    "event_id": "4104",
+                    "source": "PowerShell",
+                    "description": "Script Block Logging; captures full command-line execution of PowerShell scripts."
+                },
+                {
+                    "event_id": "4688",
+                    "source": "Security",
+                    "description": "Process Creation; detects script execution by tracking process launches.",
+                    "indicators": [
+                        "powershell.exe",
+                        "wscript.exe",
+                        "cscript.exe"
+                    ]
+                },
+                {
+                    "event_id": "5861",
+                    "source": "Windows Defender",
+                    "description": "Script Execution; captures script execution via Windows Defender AMSI logging."
+                }
+            ],
+            "sysmon": [
+                {
+                    "event_id": "1",
+                    "description": "Process Creation; monitors script execution initiated by scripting engines."
+                },
+                {
+                    "event_id": "11",
+                    "description": "File Creation; detects new script files written to disk before execution."
+                }
+            ],
+            "powershell_configuration": {
+                "actions": [
+                    "Enable Module Logging (Logs all loaded modules and cmdlets).",
+                    "Enable Script Block Logging (Captures complete PowerShell script execution history)."
+                ]
+            }
+        },
+        "endpoint_detection_response": {
+            "capabilities": [
+                "Track script execution behavior.",
+                "Detect obfuscated commands.",
+                "Prevent malicious scripts."
+            ]
+        },
+        "siem_detection_rules": {
+            "rules": [
+                "Detect script execution with obfuscated, encoded, or remote URLs.",
+                "Alert on script executions using specific flags or aliases."
+            ],
+            "indicators": [
+                "-EncodedCommand",
+                "iex (Invoke-Expression)",
+                "iwr (Invoke-WebRequest)"
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "ApplicationLogs:SQL",
+            "Channel": "Stored procedure creation or modification with shell invocation (e.g., system(), exec())"
+        },
+        {
+            "Name": "auditd:PROCTITLE",
+            "Channel": "scripting loop invoking sleep/ping"
+        },
+        {
+            "Name": "azure:activity",
+            "Channel": "Microsoft.Compute/virtualMachines/runCommand/action: Abnormal initiation of Azure RunCommand jobs or\n                PowerShell/Bash payloads"
+        },
+        {
+            "Name": "EDR:AMSI",
+            "Channel": "Malicious inline\n                C#/script blobs embedded in MSBuild projects if intercepted by\n                AMSI-aware loaders (rare but possible via chained LOLBins)"
+        },
+        {
+            "Name": "EDR:scriptblock",
+            "Channel": "Process Tree + Script Block Logging"
+        },
+        {
+            "Name": "esxi:shell",
+            "Channel": "None"
+        },
+        {
+            "Name": "esxi:vmkernel",
+            "Channel": "boot"
+        },
+        {
+            "Name": "etw:Microsoft-Antimalware-Scan-Interface",
+            "Channel": "Amsi/Script content + API verdicts during in-memory staging"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "/var/log/syslog"
+        },
+        {
+            "Name": "linux:syslog",
+            "Channel": "boot logs"
+        },
+        {
+            "Name": "m365:defender",
+            "Channel": "ScriptBlockLogging + AMSI"
+        },
+        {
+            "Name": "m365:office",
+            "Channel": "VBA auto_open, auto_close, or document_open events"
+        },
+        {
+            "Name": "m365:unified",
+            "Channel": "Scripted Activity"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "exec: Unexpected execution of osascript or AppleScript targeting sensitive apps"
+        },
+        {
+            "Name": "macos:syslog",
+            "Channel": "system.log, asl.log"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate 'eventMessage contains \"python\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream --predicate 'eventMessage contains \"wscript\" OR \"vbs\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "osascript or AppleScript invocation modifying UI"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "AppleScript creating login item via 'System Events' dictionary"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=launchservices"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "log stream with predicate 'eventMessage CONTAINS \"osascript\"'"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "subsystem=com.apple.Security or com.apple.applescript"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "osascript, AppleScript, or Python execution triggered immediately after HID connection"
+        },
+        {
+            "Name": "networkdevice:runtime",
+            "Channel": "runtime"
+        },
+        {
+            "Name": "Script",
+            "Channel": "None"
+        },
+        {
+            "Name": "WinEventLog:Application",
+            "Channel": "Stored procedure creation, modification, or xp_cmdshell invocation via SQL logs or SQL Server auditing\n            "
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "EventCode=4103, 4104, 4105, 4106"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Set-ADUser or Set-ADAuthenticationPolicy with MFA attributes disabled"
+        },
+        {
+            "Name": "WinEventLog:PowerShell",
+            "Channel": "Scripts with references to XML parsing, AES decryption, or gpprefdecrypt logic"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=1502, 1503"
+        },
+        {
+            "Name": "WinEventLog:System",
+            "Channel": "EventCode=4016, 5312"
+        }
+    ]
+}

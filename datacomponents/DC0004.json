@@ -1,0 +1,198 @@
+{
+    "id": "DC0004",
+    "name": "Firmware Modification",
+    "type": "DataComponent",
+    "description": "Changes made to firmware, which may include its settings, configurations, or underlying data. This can encompass alterations to the Master Boot Record (MBR), Volume Boot Record (VBR), or other firmware components critical to system boot and functionality. Such modifications are often indicators of adversary activity, including malware persistence and system compromise.",
+    "searchable_indexes": {
+        "platforms": [
+            "windows",
+            "linux",
+            "firmware",
+            "network",
+            "generic"
+        ],
+        "log_source_types": [
+            "firmware_log",
+            "event_log",
+            "audit",
+            "endpoint",
+            "network_flow"
+        ],
+        "indicator_types": [
+            "string",
+            "signature",
+            "hash"
+        ],
+        "categories": [
+            "boot_integrity",
+            "configuration_change",
+            "persistence",
+            "defense_evasion"
+        ],
+        "fields": [
+            "EventID",
+            "DevicePath",
+            "ImageName",
+            "BootStatus",
+            "FirmwareVersion",
+            "Checksum"
+        ],
+        "keywords": [
+            "mbr",
+            "vbr",
+            "bios",
+            "uefi",
+            "secure boot",
+            "raw disk access",
+            "sysmon event 7",
+            "/dev/sda",
+            "auditctl",
+            "firmware update"
+        ]
+    },
+    "modification_scenarios": [
+        {
+            "type": "Master Boot Record (MBR) Changes",
+            "description": "Modifying the MBR to load malicious code during the boot process."
+        },
+        {
+            "type": "Volume Boot Record (VBR) Changes",
+            "description": "Altering the VBR to redirect boot processes to malicious locations."
+        },
+        {
+            "type": "Firmware Configuration Changes",
+            "description": "Modifying BIOS/UEFI settings.",
+            "example": "Disabling Secure Boot"
+        },
+        {
+            "type": "Firmware Image Tampering",
+            "description": "Updating firmware with a malicious or unauthorized image."
+        },
+        {
+            "type": "Anomalous Logs",
+            "description": "Logs showing unauthorized firmware updates or checksum mismatches."
+        }
+    ],
+    "collection_measures": {
+        "bios_uefi_logs": {
+            "action": "Enable and monitor BIOS/UEFI logs to capture settings changes or firmware updates."
+        },
+        "firmware_integrity_monitoring": {
+            "action": "Use tools or firmware security features to detect changes to firmware components."
+        },
+        "endpoint_detection_response": {
+            "action": "Detect abnormal firmware activity, such as changes to MBR/VBR or unauthorized firmware updates."
+        },
+        "raw_device_monitoring": {
+            "windows": {
+                "tool": "Sysmon",
+                "events": [
+                    {
+                        "event_id": "7",
+                        "description": "Raw disk access (indicates potential MBR/VBR manipulation)."
+                    }
+                ]
+            },
+            "linux": {
+                "tool": "auditd",
+                "command": "auditctl -w /dev/sda -p wa -k firmware_modification",
+                "description": "Monitor write/attribute changes to the raw disk device."
+            }
+        },
+        "network_traffic_analysis": {
+            "action": "Capture firmware updates downloaded over the network, particularly from untrusted sources.",
+            "tools": [
+                "Zeek",
+                "Wireshark"
+            ]
+        },
+        "secure_boot_logs": {
+            "action": "Collect and analyze Secure Boot logs for signs of tampering.",
+            "windows_command": "Confirm-SecureBootUEFI"
+        },
+        "vendor_specific_tools": {
+            "examples": [
+                "Intel Platform Firmware Resilience (PFR)",
+                "Lenovo UEFI diagnostics"
+            ]
+        }
+    },
+    "log_sources": [
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "write access to /dev/mem or /sys/firmware/efi/efivars"
+        },
+        {
+            "Name": "auditd:SYSCALL",
+            "Channel": "ioctl/write: Direct firmware update or device memory manipulation syscalls"
+        },
+        {
+            "Name": "etw:Microsoft-Windows-Kernel-Storage",
+            "Channel": "Raw disk I/O operations bypassing NTFS APIs"
+        },
+        {
+            "Name": "Firmware",
+            "Channel": "None"
+        },
+        {
+            "Name": "firmware:integrity",
+            "Channel": "Baseline mismatch or unexpected EFI module detected during integrity checks"
+        },
+        {
+            "Name": "firmware:integrity ",
+            "Channel": "Firmware integrity verification failures or mismatches against expected UEFI/firmware image baselines\n            "
+        },
+        {
+            "Name": "firmware:runtime",
+            "Channel": "Debug or memory access commands indicating attempts to alter OS instructions in memory"
+        },
+        {
+            "Name": "firmware:smart",
+            "Channel": "Unexpected firmware-level errors or abnormal S.M.A.R.T. log entries"
+        },
+        {
+            "Name": "macos:osquery",
+            "Channel": "Unexpected changes in EFI or NVRAM variables controlling hardware boot state"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "boot failure events or SMC validation errors"
+        },
+        {
+            "Name": "macos:unifiedlog",
+            "Channel": "Firmware update events or kernel extension (kext) loads not signed by Apple"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "Boot image path or firmware configuration variable modified outside of maintenance windows"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "Log entries indicating ROMMON image upgrade commands (boot system, upgrade rom-monitor)"
+        },
+        {
+            "Name": "networkdevice:config",
+            "Channel": "Boot variable modified to point to non-standard or unsigned image"
+        },
+        {
+            "Name": "networkdevice:firmware",
+            "Channel": "Firmware update initiated or bootloader tampering detected"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Image Upgrade / Configuration Change"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Custom firmware or routing changes"
+        },
+        {
+            "Name": "networkdevice:syslog",
+            "Channel": "Boot information log showing image loaded from TFTP server instead of local storage"
+        },
+        {
+            "Name": "WinEventLog:Microsoft-Windows-Kernel-Boot",
+            "Channel": "Firmware integrity validation failed or boot configuration tampered"
+        }
+    ]
+}
