@@ -1,53 +1,9 @@
 ---
 name: ICS Detection Engine Design
 overview: Design a complete real-time detection and correlation engine that matches centralized ICS/OT logs in Elasticsearch against 36 MITRE ATT&CK for ICS DataComponent definitions, producing structured alerts with evidence and similarity scores.
-todos:
-  - id: filebeat-config
-    content: Create filebeat.yml with per-asset input definitions for all 5 ICS containers (simulation, plc, ews, hmi, router), with proper fields tagging (asset_id, asset_name, log_type, asset_ip, zone)
-    status: pending
-  - id: logstash-pipeline
-    content: "Create Logstash pipeline configs: 01-input.conf, 10-parse-syslog.conf, 11-parse-auth.conf, 12-parse-audit.conf, 13-parse-suricata.conf, 14-parse-ics.conf, 20-enrich-mitre.conf, 30-output.conf"
-    status: pending
-  - id: mitre-mapping
-    content: Generate logstash/mitre_mapping/log_source_to_dc.yml dictionary by scanning all 36 DC JSON files and mapping log_source Name -> DC IDs
-    status: pending
-  - id: assets-json
-    content: Create assets.json inventory file mapping each ICS asset (simulation, plc, ews, hmi, router) with name, IP, zone, and type
-    status: pending
-  - id: data-models
-    content: "Implement Python data models: NormalizedEvent, DataComponentProfile, CandidateMatch, CorrelationGroup, DetectionAlert using pydantic"
-    status: pending
-  - id: dc-loader
-    content: Implement DC profile loader that reads all 36 datacomponents/*.json files and builds DataComponentProfile objects with keyword sets, field sets, log_source lists
-    status: pending
-  - id: feature-extractor
-    content: "Implement feature extraction: parse ES documents into NormalizedEvent, extract fields, infer categories from log_type and program name"
-    status: pending
-  - id: matcher-scorer
-    content: "Implement the multi-signal matcher and weighted scorer: log_source_match (0.35), keyword_match (0.25), field_match (0.20), category_match (0.10), channel_match (0.10)"
-    status: pending
-  - id: correlation-engine
-    content: Implement correlation engine with sliding windows, asset grouping, chain rules, and event counting/deduplication
-    status: pending
-  - id: alert-emitter
-    content: Implement alert emitter that produces the required JSON structure and indexes to ics-alerts-* in Elasticsearch
-    status: pending
-  - id: es-poller
-    content: Implement the ES poller using PIT + search_after for near-real-time event consumption with checkpoint persistence
-    status: pending
-  - id: es-templates
-    content: Create ES index templates for ics-* indices with explicit field mappings (keyword for asset_id, log_type, etc.)
-    status: pending
-  - id: backtest-mode
-    content: Implement backtest CLI mode with --start and --end parameters for historical analysis
-    status: pending
-  - id: validation-tests
-    content: "Create validation test suite: smoke tests for each DC type, Caldera attack scenario mappings, precision/recall measurement scripts"
-    status: pending
-isProject: false
 ---
 
-# ICS DataComponent Detection and Correlation Engine -- Complete Design
+# ICS DataComponent Detection and Correlation Engine - Complete Design
 
 ## 1. Full Architecture
 
