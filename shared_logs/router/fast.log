@@ -1,0 +1,8 @@
+03/23/2026-15:17:54.872398  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.95.2:502 -> 192.168.90.107:58232
+03/23/2026-15:17:54.929699  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.90.107:58232 -> 192.168.95.2:502
+03/23/2026-15:53:03.837876  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.95.2:502 -> 192.168.90.107:52400
+03/23/2026-15:53:03.898312  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.90.107:52400 -> 192.168.95.2:502
+03/23/2026-16:14:45.598258  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.95.2:502 -> 192.168.90.107:40728
+03/23/2026-16:14:45.656780  [**] [1:2230002:1] SURICATA TLS invalid record type [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.90.107:40728 -> 192.168.95.2:502
+03/23/2026-18:19:09.702969  [**] [1:2260000:1] SURICATA Applayer Mismatch protocol both directions [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.90.107:42778 -> 192.168.95.2:502
+03/23/2026-18:27:41.652570  [**] [1:2260000:1] SURICATA Applayer Mismatch protocol both directions [**] [Classification: Generic Protocol Command Decode] [Priority: 3] {TCP} 192.168.90.107:43198 -> 192.168.95.2:502

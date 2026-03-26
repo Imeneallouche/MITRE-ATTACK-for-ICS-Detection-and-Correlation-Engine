@@ -1,0 +1,29 @@
+Mar 23 20:12:34 ews sshd[2778]: Accepted password for engineer from 192.168.90.6 port 57596 ssh2
+Mar 23 20:12:34 ews sshd[2778]: pam_unix(sshd:session): session opened for user engineer(uid=1000) by (uid=0)
+Mar 23 20:12:34 ews sshd[2778]: pam_systemd(sshd:session): Failed to connect to system bus: No such file or directory
+Mar 23 20:12:34 ews sshd[2778]: pam_env(sshd:session): Unable to open env file: /etc/default/locale: No such file or directory
+Mar 23 20:23:33 ews sshd[2778]: syslogin_perform_logout: logout() returned an error
+Mar 23 20:23:33 ews sshd[2791]: Received disconnect from 192.168.90.6 port 57596:11: disconnected by user
+Mar 23 20:23:33 ews sshd[2791]: Disconnected from user engineer 192.168.90.6 port 57596
+Mar 23 20:23:33 ews sshd[2778]: pam_unix(sshd:session): session closed for user engineer
+Mar 23 20:23:36 ews sshd[2892]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=192.168.90.6  user=engineer
+Mar 23 20:23:38 ews sshd[2892]: Failed password for engineer from 192.168.90.6 port 60100 ssh2
+Mar 23 20:24:06 ews sshd[2892]: Accepted password for engineer from 192.168.90.6 port 60100 ssh2
+Mar 23 20:24:06 ews sshd[2892]: pam_unix(sshd:session): session opened for user engineer(uid=1000) by (uid=0)
+Mar 23 20:24:06 ews sshd[2892]: pam_systemd(sshd:session): Failed to connect to system bus: No such file or directory
+Mar 23 20:24:06 ews sshd[2892]: pam_env(sshd:session): Unable to open env file: /etc/default/locale: No such file or directory
+Mar 23 21:59:34 ews sshd[2892]: syslogin_perform_logout: logout() returned an error
+Mar 23 21:59:34 ews sshd[2909]: Received disconnect from 192.168.90.6 port 60100:11: disconnected by user
+Mar 23 21:59:34 ews sshd[2909]: Disconnected from user engineer 192.168.90.6 port 60100
+Mar 23 21:59:34 ews sshd[2892]: pam_unix(sshd:session): session closed for user engineer
+Mar 23 21:59:38 ews sshd[3667]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=192.168.90.6  user=engineer
+Mar 23 21:59:40 ews sshd[3667]: Failed password for engineer from 192.168.90.6 port 38062 ssh2
+Mar 23 21:59:57 ews sshd[3667]: Accepted password for engineer from 192.168.90.6 port 38062 ssh2
+Mar 23 21:59:57 ews sshd[3667]: pam_unix(sshd:session): session opened for user engineer(uid=1000) by (uid=0)
+Mar 23 21:59:57 ews sshd[3667]: pam_systemd(sshd:session): Failed to connect to system bus: No such file or directory
+Mar 23 21:59:57 ews sshd[3667]: pam_env(sshd:session): Unable to open env file: /etc/default/locale: No such file or directory
+Mar 25 14:58:09 ews su: pam_unix(su-l:session): session closed for user engineer
+Mar 25 14:58:10 ews sshd[3682]: Received disconnect from 192.168.90.6 port 38062:11: disconnected by user
+Mar 25 14:58:10 ews sshd[3682]: Disconnected from user engineer 192.168.90.6 port 38062
+Mar 25 14:58:10 ews sshd[3667]: pam_unix(sshd:session): session closed for user engineer
+Mar 25 14:58:10 ews sshd[3667]: syslogin_perform_logout: logout() returned an error

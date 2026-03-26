@@ -222,7 +222,7 @@ services:
     environment:
       LS_JAVA_OPTS: "-Xmx512m -Xms512m"
     healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail http://localhost:9600/?pretty || exit 1"]
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/localhost/9600'"]
       interval: 30s
       timeout: 10s
       retries: 5
