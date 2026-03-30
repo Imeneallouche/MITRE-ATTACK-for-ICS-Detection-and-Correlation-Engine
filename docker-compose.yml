@@ -163,7 +163,11 @@ services:
 
   caldera:
     # ── C2 framework – for offensive simulation only
-    image: fortiphyd/grfics-caldera
+    # Built from local source (modified from fortiphyd/grfics-caldera)
+    build:
+      context: ./caldera
+      dockerfile: Dockerfile
+    image: grfics-caldera-local   # tag given to the locally built image
     container_name: caldera
     hostname: caldera
     restart: unless-stopped
