@@ -1,0 +1,60 @@
+{
+  "index_patterns": ["ics-suricata-*", "ics-audit-*", "ics-auth-*", "ics-process-*", "ics-hmi-*", "ics-syslog-*", "ics-netfilter-*", "ics-docker-*"],
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "@timestamp":             { "type": "date" },
+        "asset_id":               { "type": "keyword" },
+        "asset_name":             { "type": "keyword" },
+        "asset_ip":               { "type": "ip" },
+        "asset_zone":             { "type": "keyword" },
+        "log_type":               { "type": "keyword" },
+        "log_source_normalized":  { "type": "keyword" },
+        "log_message":            { "type": "text" },
+        "message":                { "type": "text" },
+        "event.kind":             { "type": "keyword" },
+        "event.category":         { "type": "keyword" },
+        "event.type":             { "type": "keyword" },
+        "event.dataset":          { "type": "keyword" },
+        "ecs.version":            { "type": "keyword" },
+        "mitre_dc_candidates":    { "type": "keyword" },
+        "mitre_keyword_hits":     { "type": "object", "dynamic": true },
+        "syslog_program":         { "type": "keyword" },
+        "syslog_host":            { "type": "keyword" },
+        "syslog_pid":             { "type": "keyword" },
+        "auth_user":              { "type": "keyword" },
+        "auth_method":            { "type": "keyword" },
+        "src_ip":                 { "type": "ip" },
+        "src_port":               { "type": "integer" },
+        "dest_ip":                { "type": "ip" },
+        "dest_port":              { "type": "integer" },
+        "audit_type":             { "type": "keyword" },
+        "audit_fields":           { "type": "object", "dynamic": true },
+        "netfilter.src_ip":       { "type": "ip" },
+        "netfilter.dest_ip":      { "type": "ip" },
+        "netfilter.src_port":     { "type": "integer" },
+        "netfilter.dest_port":    { "type": "integer" },
+        "netfilter.protocol":     { "type": "keyword" },
+        "netfilter.action":       { "type": "keyword" },
+        "netfilter.in_iface":     { "type": "keyword" },
+        "netfilter.out_iface":    { "type": "keyword" },
+        "modbus.function_code":   { "type": "integer" },
+        "modbus.exception_code":  { "type": "integer" },
+        "modbus.unit_id":         { "type": "integer" },
+        "modbus.transaction_id":  { "type": "integer" },
+        "ics.protocol":           { "type": "keyword" },
+        "ics.alarm_type":         { "type": "keyword" },
+        "ics.severity":           { "type": "keyword" },
+        "container.name":         { "type": "keyword" },
+        "container.id":           { "type": "keyword" },
+        "container.image.name":   { "type": "keyword" }
+      }
+    }
+  }
+}

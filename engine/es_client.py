@@ -61,30 +61,26 @@ class ESClient:
     def close_pit(self, pit_id: str) -> None:
         self.client.close_point_in_time(body={"id": pit_id})
 
-    def poll_events(
-        self,
-        index_pattern: str,
-        since_ts: str,
-        batch_size: int,
-        pit_id: Optional[str] = None,
-        search_after: Optional[List[Any]] = None,
-    ) -> Dict[str, Any]:
+    def poll_events(self, index_pattern: str, since_ts: str, batch_size: int, pit_id: Optional[str] = None, search_after: Optional[List[Any]] = None) -> Dict[str, Any]:
         query = {
             "size": batch_size,
-            "sort": [{"@timestamp": "asc"}, {"_id": "asc"}],
+            "sort": [{"@timestamp": "asc"}, {"_shard_doc": "asc"}],
             "query": {
                 "bool": {
                     "must": [{"range": {"@timestamp": {"gt": since_ts}}}],
                     "must_not": [{"terms": {"asset_id": ["kali", "caldera"]}}],
                 }
             },
-        }
+            }
+
         if pit_id:
             query["pit"] = {"id": pit_id, "keep_alive": "1m"}
         else:
             query["index"] = index_pattern
+
         if search_after:
             query["search_after"] = search_after
+
         return self.client.search(body=query)
 
     def index_document(self, index_name: str, document: Dict[str, Any], doc_id: Optional[str] = None) -> None:

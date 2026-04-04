@@ -19,6 +19,12 @@ FIELD_ALIASES = {
     "user": "auth_user",
     "username": "auth_user",
     "processname": "process_name",
+    "netfilter.src_ip": "src_ip",
+    "netfilter.dest_ip": "dst_ip",
+    "netfilter.src_port": "src_port",
+    "netfilter.dest_port": "dest_port",
+    "modbus.function_code": "modbus_function_code",
+    "modbus.exception_code": "modbus_exception_code",
 }
 
 
@@ -49,6 +55,16 @@ def _extract_field_candidates(source: Dict[str, Any]) -> Dict[str, Any]:
         for key, value in audit_fields.items():
             fields[f"audit.{key}"] = value
             fields[key] = value
+    # Pull nested netfilter fields up.
+    netfilter_fields = source.get("netfilter")
+    if isinstance(netfilter_fields, dict):
+        for key, value in netfilter_fields.items():
+            fields[f"netfilter.{key}"] = value
+    # Pull nested modbus fields up.
+    modbus_fields = source.get("modbus")
+    if isinstance(modbus_fields, dict):
+        for key, value in modbus_fields.items():
+            fields[f"modbus.{key}"] = value
     return fields
 
 
@@ -60,13 +76,30 @@ def infer_categories(log_type: str, source_name: str, message: str) -> Iterable[
         cats.add("user_session")
     if any(x in text for x in ["exec", "process", "pid", "auditd"]):
         cats.add("process_execution")
-    if any(x in text for x in ["network", "flow", "conn", "suricata", "src_ip", "dst_ip"]):
+    if any(x in text for x in ["network", "flow", "conn", "suricata", "src_ip", "dst_ip",
+                                 "netfilter", "iptables", "nflog"]):
         cats.add("network_traffic")
     if any(x in text for x in ["file", "write", "chmod", "unlink", "rename"]):
         cats.add("file_system")
-    if any(x in text for x in ["alarm", "setpoint", "trip", "interlock"]):
+    if any(x in text for x in ["alarm", "setpoint", "trip", "interlock", "process_alarm",
+                                 "plc_app", "modbus", "dnp3", "register", "coil",
+                                 "pressure", "temperature", "valve", "actuator"]):
         cats.add("operational_technology")
         cats.add("process_control")
+    if any(x in text for x in ["modbus", "dnp3", "enip", "ethernet/ip", "opc", "port 502"]):
+        cats.add("ics_protocol")
+    if any(x in text for x in ["catalina", "tomcat", "scadalts", "openplc", "supervisor",
+                                 "flask", "nginx", "application"]):
+        cats.add("application")
+    if any(x in text for x in ["kern", "kernel", "module", "firmware", "insmod", "modprobe"]):
+        cats.add("kernel")
+    if any(x in text for x in ["firewall", "fw_app", "rule", "iptables", "drop", "accept",
+                                 "reject"]):
+        cats.add("firewall")
+    if any(x in text for x in ["cron", "schtask", "scheduled"]):
+        cats.add("scheduled_task")
+    if any(x in text for x in ["daemon", "service", "systemd", "systemctl"]):
+        cats.add("service")
     if not cats:
         cats.add("generic")
     return cats

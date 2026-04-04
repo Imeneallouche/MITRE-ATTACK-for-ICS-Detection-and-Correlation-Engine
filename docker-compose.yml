@@ -30,6 +30,8 @@ services:
       - ./shared_logs/simulation/kern.log:/var/log/kern.log
       # EXPORT: Process alarm / sensor data for DC0109 (Process/Event Alarm)
       - ./shared_logs/simulation/process_alarms:/var/log/grfics/alarms
+      # EXPORT: Supervisor logs for Modbus I/O + TE sim (DC0109/DC0107/DC0038)
+      - ./shared_logs/simulation/supervisor:/var/log/supervisor
     networks:
       a-grfics-admin: {}
       b-ics-net:
@@ -110,6 +112,12 @@ services:
       - ./shared_logs/hmi/syslog:/var/log/syslog
       # EXPORT: Audit logs
       - ./shared_logs/hmi/audit:/var/log/audit
+      # EXPORT: Daemon log for DC0033/DC0060 (service events)
+      - ./shared_logs/hmi/daemon.log:/var/log/daemon.log
+      # EXPORT: Kernel log for DC0016 (Module Load)
+      - ./shared_logs/hmi/kern.log:/var/log/kern.log
+      # EXPORT: Supervisor logs for MariaDB/Tomcat lifecycle (DC0038/DC0060)
+      - ./shared_logs/hmi/supervisor:/var/log/supervisor
     networks:
       a-grfics-admin: {}
       c-dmz-net:
@@ -150,6 +158,10 @@ services:
       - ./shared_logs/router:/var/log/suricata
       # EXPORT: Router syslog for DC0016 (firmware/module), DC0004 (firmware mod)
       - ./shared_logs/router/syslog:/var/log/syslog
+      # EXPORT: ulogd netfilter JSON firewall logs for DC0078/DC0082 (Network Traffic)
+      - ./shared_logs/router/netfilter:/var/log/ulog
+      # EXPORT: Flask firewall-UI logs for DC0038/DC0061 (App Log / Config Change)
+      - ./shared_logs/router/flask:/var/log/flask
     healthcheck:
       test: ["CMD", "bash", "-c", "ip route | grep -q 192.168.95.0 || exit 1"]
       interval: 5s
@@ -188,10 +200,10 @@ services:
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
       - xpack.security.enabled=false
       - xpack.ml.enabled=false
-      # ILM: auto-create index templates on startup
       - action.auto_create_index=ics-*,auditd-*,syslog-*,linux-*,plc-*,hmi-*,scada-*
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./elasticsearch/templates:/usr/share/elasticsearch/templates:ro
     ports:
       - "9200:9200"
     networks:
@@ -202,6 +214,29 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  es-init:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: es-init
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./elasticsearch/templates:/templates:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        for f in /templates/*.json; do
+          tname=$$(basename "$$f" .json)
+          echo "Loading template $$tname from $$f ..."
+          curl -s -X PUT "http://elasticsearch:9200/_index_template/$$tname" \
+               -H 'Content-Type: application/json' -d @"$$f"
+          echo ""
+        done
+        echo "All index templates loaded."
+    restart: "no"
+    networks:
+      - a-grfics-admin
 
   logstash:
     image: docker.elastic.co/logstash/logstash:8.13.0

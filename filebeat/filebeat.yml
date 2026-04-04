@@ -1,4 +1,9 @@
 filebeat.inputs:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SIMULATION (192.168.95.10 – ICS process + Modbus remote-I/O)
+  # ═══════════════════════════════════════════════════════════════════════════
+
   - type: filestream
     id: simulation-syslog
     paths: ["/shared_logs/simulation/syslog"]
@@ -42,6 +47,45 @@ filebeat.inputs:
       asset_zone: "ics-net"
       log_type: "process_alarm"
     fields_under_root: true
+
+  - type: filestream
+    id: simulation-supervisor-modbus
+    paths: ["/shared_logs/simulation/supervisor/modbus.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "modbus_io"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-supervisor-sim
+    paths: ["/shared_logs/simulation/supervisor/simulation.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "sim_process"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-supervisor-err
+    paths:
+      - "/shared_logs/simulation/supervisor/modbus.err"
+      - "/shared_logs/simulation/supervisor/simulation.err"
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "sim_error"
+    fields_under_root: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PLC (192.168.95.2 – OpenPLC controller)
+  # ═══════════════════════════════════════════════════════════════════════════
 
   - type: filestream
     id: plc-auth
@@ -108,6 +152,10 @@ filebeat.inputs:
       asset_zone: "ics-net"
       log_type: "kern"
     fields_under_root: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # EWS (192.168.95.5 – Engineering Workstation)
+  # ═══════════════════════════════════════════════════════════════════════════
 
   - type: filestream
     id: ews-auth
@@ -186,6 +234,10 @@ filebeat.inputs:
       log_type: "pacct"
     fields_under_root: true
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # HMI (192.168.90.107 – SCADA-LTS / ScadaBR on Tomcat)
+  # ═══════════════════════════════════════════════════════════════════════════
+
   - type: filestream
     id: hmi-catalina
     paths: ["/shared_logs/hmi/catalina/*.log"]
@@ -231,6 +283,45 @@ filebeat.inputs:
     fields_under_root: true
 
   - type: filestream
+    id: hmi-daemon
+    paths: ["/shared_logs/hmi/daemon.log"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "daemon"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-kern
+    paths: ["/shared_logs/hmi/kern.log"]
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "kern"
+    fields_under_root: true
+
+  - type: filestream
+    id: hmi-supervisor
+    paths:
+      - "/shared_logs/hmi/supervisor/*.log"
+      - "/shared_logs/hmi/supervisor/*.err"
+    fields:
+      asset_id: "hmi"
+      asset_name: "HMI ScadaLTS"
+      asset_ip: "192.168.90.107"
+      asset_zone: "dmz-net"
+      log_type: "hmi_supervisor"
+    fields_under_root: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ROUTER (192.168.95.200 – Suricata IDS + iptables + Flask FW UI)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - type: filestream
     id: router-suricata-eve
     paths: ["/shared_logs/router/eve.json"]
     parsers:
@@ -254,6 +345,49 @@ filebeat.inputs:
       asset_ip: "192.168.95.200"
       asset_zone: "perimeter"
       log_type: "syslog"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-netfilter
+    paths: ["/shared_logs/router/netfilter/netfilter_log.json"]
+    parsers:
+      - ndjson:
+          target: "netfilter"
+          add_error_key: true
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "netfilter"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-flask
+    paths:
+      - "/shared_logs/router/flask/flask-stdout.log"
+      - "/shared_logs/router/flask/flask-stderr.log"
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "fw_app"
+    fields_under_root: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DOCKER CONTAINER LOGS (stdout/stderr from all containers)
+  # Captures output from kali, caldera, and any service without file mounts.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - type: container
+    id: docker-containers
+    paths: ["/var/lib/docker/containers/*/*.log"]
+    processors:
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+    fields:
+      log_type: "docker"
     fields_under_root: true
 
 processors:
