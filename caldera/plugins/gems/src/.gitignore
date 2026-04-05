@@ -1,0 +1,11 @@
+.DS_Store
+
+# IDE
+.vscode/
+
+# Local development files
+local/
+cmd/test/
+
+# Build
+bin/

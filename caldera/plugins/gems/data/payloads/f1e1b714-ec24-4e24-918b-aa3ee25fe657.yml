@@ -1,0 +1,14 @@
+---
+
+id: f1e1b714-ec24-4e24-918b-aa3ee25fe657
+name: GEMS Payloads
+standard_payloads:
+  client.exe:
+    description: GEMS Plugin Actions (Windows) - command line interface for a GEMS client.
+    id: 07f38285-cadc-4ba1-a3df-28692b301392
+  client:
+    description: GEMS Plugin Actions (Linux) - command line interface for a GEMS client.
+    id: 6c1bc1b2-2e42-48bd-97f0-c03d44cc5059
+  client_darwin:
+    description: GEMS Plugin Actions (Darwin) - command line interface for a GEMS client.
+    id: 2f3fcd24-a8df-451a-9715-649fcce78184

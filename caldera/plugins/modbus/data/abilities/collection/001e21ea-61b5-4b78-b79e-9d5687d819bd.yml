@@ -1,0 +1,30 @@
+---
+
+- id: 001e21ea-61b5-4b78-b79e-9d5687d819bd
+  name: Modbus - Read Discrete Inputs
+  description: |
+    Modbus Function 2 (0x02): Read Discrete Inputs
+
+    This function code is used to read from 1 to 2000 contiguous status of discrete inputs in a remote device. Addressing starts at 0 (e.g. discrete inputs 1-5 = addresses 0-4).
+  tactic: collection
+  technique_id: T0861
+  technique_name: Point & Tag Identification
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      ./modbus_cli #{modbus.server.ip} --port #{modbus.server.port} read_di #{modbus.read_discrete.start} #{modbus.read_discrete.count}
+    payloads:
+    - modbus_cli
+  - platform: windows
+    name: psh
+    command: >
+      .\modbus_cli.exe #{modbus.server.ip} --port #{modbus.server.port} read_di #{modbus.read_discrete.start} #{modbus.read_discrete.count}
+    payloads:
+    - modbus_cli.exe
+  - platform: darwin
+    name: sh
+    command: >
+      ./modbus_cli_darwin #{modbus.server.ip} --port #{modbus.server.port} read_di #{modbus.read_discrete.start} #{modbus.read_discrete.count}
+    payloads:
+    - modbus_cli_darwin

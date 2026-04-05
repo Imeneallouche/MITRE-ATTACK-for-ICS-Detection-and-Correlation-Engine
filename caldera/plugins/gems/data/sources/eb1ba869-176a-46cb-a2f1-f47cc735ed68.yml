@@ -1,0 +1,23 @@
+id: eb1ba869-176a-46cb-a2f1-f47cc735ed68
+name: GEMS Sample Facts
+facts:
+- trait: gems.device.addr
+  value: localhost:12345
+- trait: gems.device.psm
+  value: ascii
+- trait: gems.device.psm
+  value: xml 
+- trait: gems.device.user
+  value: none
+- trait: gems.device.password
+  value: none
+- trait: gems.config.name
+  value: ExampleConfig
+- trait: gems.parameter.names
+  value: Example,Parameter,Names
+- trait: gems.parameter.value
+  value: ExampleIntValue:int=1024
+- trait: gems.parameter.value
+  value: ExampleStringValue:string=HelloWorld
+- trait: gems.directive.name
+  value: ExampleDirectiveName 

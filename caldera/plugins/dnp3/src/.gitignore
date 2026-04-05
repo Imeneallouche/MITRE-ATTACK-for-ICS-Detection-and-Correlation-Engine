@@ -1,0 +1,34 @@
+# OSX
+# Folder view configuration files
+.DS_Store
+Desktop.ini
+
+#cmake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+
+build/
+out/
+build_x64/
+
+#doxygen
+doc
+
+# intellij/maven generated files
+*.iml
+**/**/target
+**/.idea
+
+#clion
+/cmake-build-*
+
+# Visual Studio
+.vs/
+
+# VS Code
+.vscode/
+
+# Third Party
+third_party/opendnp3*

@@ -1,0 +1,65 @@
+- id: 5ea4e71a-dcea-42e5-b0e5-03893d51c64d
+  name: GEMS - Get All Parameters
+  description: Get the values of all parameters in the current configuration.
+  tactic: collection
+  technique_id: T0861
+  technique_name: Point & Tag Identification
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      ./gems-client get #{gems.device.psm} #{gems.device.addr}
+      --user #{gems.device.user} --pass #{gems.device.password}
+    payloads:
+    - gems-client
+    timeout: 360
+    parsers:
+    - module: plugins.gems.app.parsers.parameter
+      parserconfigs:
+      - source: gems.device.addr
+        edge: has_parameter
+        target: gems.parameter.value
+  - platform: windows
+    name: psh
+    command: >
+      .\gems-client.exe get #{gems.device.psm} #{gems.device.addr}
+      --user #{gems.device.user} --pass #{gems.device.password}
+    payloads:
+    - gems-client.exe
+    timeout: 360
+    parsers:
+    - module: plugins.gems.app.parsers.parameter
+      parserconfigs:
+      - source: gems.device.addr
+        edge: has_parameter
+        target: gems.parameter.value
+  - platform: windows
+    name: cmd
+    command: >
+      .\gems-client.exe get #{gems.device.psm} #{gems.device.addr}
+      --user #{gems.device.user} --pass #{gems.device.password}
+    payloads:
+    - gems-client.exe
+    timeout: 360
+    parsers:
+    - module: plugins.gems.app.parsers.parameter
+      parserconfigs:
+      - source: gems.device.addr
+        edge: has_parameter
+        target: gems.parameter.value
+  - platform: darwin
+    name: sh
+    command: >
+      ./gems-client_darwin get #{gems.device.psm} #{gems.device.addr}
+      --user #{gems.device.user} --pass #{gems.device.password}
+    payloads:
+    - gems-client_darwin
+    timeout: 360
+    parsers:
+    - module: plugins.gems.app.parsers.parameter
+      parserconfigs:
+      - source: gems.device.addr
+        edge: has_parameter
+        target: gems.parameter.value
+  repeatable: true
+  plugin: gems

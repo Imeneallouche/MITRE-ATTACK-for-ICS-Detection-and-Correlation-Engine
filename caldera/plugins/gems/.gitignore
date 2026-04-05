@@ -1,0 +1,16 @@
+.DS_Store
+
+*.pyc
+*.crt
+*.pyd
+*.spec
+*.pstat
+*.tokens
+
+*__pycache__*
+.mypy_cache/
+
+# ide folders
+.idea/
+.vs/
+.vscode/

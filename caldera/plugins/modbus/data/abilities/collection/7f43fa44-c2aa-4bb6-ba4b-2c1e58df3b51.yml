@@ -1,0 +1,77 @@
+---
+
+- id: 7f43fa44-c2aa-4bb6-ba4b-2c1e58df3b51
+  name: Modbus - Scan Device
+  description: |
+    Procedure
+
+    Automatically discover and read all available Modbus data on a device.
+  tactic: collection
+  technique_id: T0802
+  technique_name: Automated Collection
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      ./modbus_cli #{modbus.server.ip} --port #{modbus.server.port} scan
+    payloads:
+    - modbus_cli
+    parsers:
+    - module: plugins.modbus.app.parsers.data_set
+      parserconfigs:
+      - source: modbus.coil.count
+        edge: has_register_type
+        target: modbus.coil.start_address
+      - source: modbus.discrete_input.count
+        edge: has_register_type
+        target: modbus.discrete_input.start_address
+      - source: modbus.holding_register.count
+        edge: has_register_type
+        target: modbus.holding_register.start_address
+      - source: modbus.input_register.count
+        edge: has_register_type
+        target: modbus.input_register.start_address
+  - platform: windows
+    name: psh
+    command: >
+      .\modbus_cli.exe #{modbus.server.ip} --port #{modbus.server.port} scan
+    payloads:
+    - modbus_cli.exe
+    parsers:
+    - module: plugins.modbus.app.parsers.data_set
+      parserconfigs:
+      - source: modbus.coil.count
+        edge: has_register_type
+        target: modbus.coil.start_address
+      - source: modbus.discrete_input.count
+        edge: has_register_type
+        target: modbus.discrete_input.start_address
+      - source: modbus.holding_register.count
+        edge: has_register_type
+        target: modbus.holding_register.start_address
+      - source: modbus.input_register.count
+        edge: has_register_type
+        target: modbus.input_register.start_address
+  - platform: darwin
+    name: sh
+    command: >
+      ./modbus_cli_darwin #{modbus.server.ip} --port #{modbus.server.port} scan
+    payloads:
+    - modbus_cli_darwin
+    parsers:
+    - module: plugins.modbus.app.parsers.data_set
+      parserconfigs:
+      - source: modbus.coil.count
+        edge: has_register_type
+        target: modbus.coil.start_address
+      - source: modbus.discrete_input.count
+        edge: has_register_type
+        target: modbus.discrete_input.start_address
+      - source: modbus.holding_register.count
+        edge: has_register_type
+        target: modbus.holding_register.start_address
+      - source: modbus.input_register.count
+        edge: has_register_type
+        target: modbus.input_register.start_address
+  repeatable: true
+  plugin: modbus

@@ -1,0 +1,70 @@
+<div>
+    <div class="banner">
+        <p class="banner-text">Warning: You are using an outdated version of Caldera. Please update to the latest version for critical security patches and new features.</p>
+    </div>
+    <div>
+        <h2>{{ name }} Protocol Plugin</h2>
+        <p>{{ description }}</p>
+    </div>
+    <hr>
+    <h3>Documentation</h3>
+    <p>
+        Get started by referencing the
+        <a href="/docs/plugins/{{ name.lower() }}/{{ name.lower() }}.html" target="_blank">{{ name }} Plugin Fieldmanual</a>.
+    </p>
+    <h3>Abilities</h3>
+    <table class="table abilities-table">
+        <thead>
+            <tr class="table-header">
+                <th>Name</th>
+                <th>ATT&amp;CK Technique</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in abilities %}
+            <tr>
+                <td>{{a.name}}</td>
+                <td>
+                    <div class="abilitytags">
+                        <span class="tag tactic is-dark m-0 mb-1">{{a.tactic}}</span><br>
+                    </div>
+                    {{a.technique_name}} ({{a.technique_id}})
+                </td>
+                <td>{{a.description|safe}}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3>Adversaries</h3>
+    <p>There are no custom {{ name }} adversaries at this time.</p>
+</div>
+
+<style scoped>
+.abilities-table td:nth-child(1) { /* Ability name column */
+    font-weight: bold;
+}
+.abilities-table td:nth-child(3) { /* Description column */
+    width: 40%;
+}
+.abilities-table tbody tr:nth-child(odd) {
+    background-color: var(--primary-color-translucent);
+}
+.abilities-table tbody tr:hover {
+    background-color: var(--primary-color);
+}
+.banner {
+    background-color: #ffcc00;
+    color: #333;
+    text-align: center;
+    padding: 15px 0;
+    margin-bottom: 15px;
+    z-index: 1000;
+}
+.banner-text {
+    margin: 0;
+    font-size: 16px;
+    font-weight: bold;
+}
+</style>
