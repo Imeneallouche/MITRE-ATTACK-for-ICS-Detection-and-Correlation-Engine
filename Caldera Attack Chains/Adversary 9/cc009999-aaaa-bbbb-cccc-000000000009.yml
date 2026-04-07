@@ -1,0 +1,17 @@
+---
+
+id: cc009999-aaaa-bbbb-cccc-000000000009
+name: PLC Mode Abuse and Data Destruction Adversary
+description: |
+  Advanced attack targeting PLC operating modes. Stops PLC, destroys
+  legitimate programs, uploads identically-named malicious logic
+  to masquerade as the original, then restarts PLC without safety
+  protections.
+atomic_ordering:
+- c9d0e1f2-9999-9999-9999-000000000001  # Detect operating mode
+- c9d0e1f2-9999-9999-9999-000000000003  # Download current program
+- c9d0e1f2-9999-9999-9999-000000000002  # Stop PLC
+- c9d0e1f2-9999-9999-9999-000000000004  # Destroy all programs
+- c9d0e1f2-9999-9999-9999-000000000005  # Upload masqueraded program
+- c9d0e1f2-9999-9999-9999-000000000006  # Compile and start
+- a1b2c3d4-1111-1111-1111-000000000002  # Verify impact (from Chain 1)

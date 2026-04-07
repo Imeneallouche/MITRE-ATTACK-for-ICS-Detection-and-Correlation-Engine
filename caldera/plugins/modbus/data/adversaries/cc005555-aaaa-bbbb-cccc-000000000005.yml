@@ -1,0 +1,14 @@
+---
+
+id: cc005555-aaaa-bbbb-cccc-000000000005
+name: Engineering Workstation Pivot Adversary
+description: |
+  Compromises the EWS via external remote services, transfers Modbus
+  attack tooling laterally, then manipulates PLC I/O from a trusted
+  ICS network position to evade source-IP-based detection rules.
+atomic_ordering:
+- e5f6a7b8-5555-5555-5555-000000000001  # Network enumeration
+- e5f6a7b8-5555-5555-5555-000000000005  # Harvest local files
+- e5f6a7b8-5555-5555-5555-000000000002  # Transfer Modbus tool
+- e5f6a7b8-5555-5555-5555-000000000003  # Automated I/O collection
+- e5f6a7b8-5555-5555-5555-000000000004  # Manipulate I/O from trusted source

@@ -1,0 +1,15 @@
+---
+
+id: cc008888-aaaa-bbbb-cccc-000000000008
+name: Network Infrastructure Sabotage Adversary
+description: |
+  Targets the ICS router/firewall to disable IDS, clear logs,
+  and deploy iptables rules that isolate the PLC from its field
+  devices, causing complete denial of control.
+atomic_ordering:
+- b8c9d0e1-8888-8888-8888-000000000001  # Router login
+- b8c9d0e1-8888-8888-8888-000000000002  # Stop IDS
+- b8c9d0e1-8888-8888-8888-000000000003  # Clear logs
+- b8c9d0e1-8888-8888-8888-000000000004  # Block PLC commands
+- b8c9d0e1-8888-8888-8888-000000000005  # Block device responses
+- a1b2c3d4-1111-1111-1111-000000000002  # Verify PLC lost control

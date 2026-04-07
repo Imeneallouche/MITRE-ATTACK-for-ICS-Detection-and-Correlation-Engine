@@ -4,7 +4,7 @@
   name: OpenPLC - Download Running Program
   description: Download the currently active Structured Text program from OpenPLC
   tactic: collection
-  technique_id: T0843
+  technique_id: T0845
   technique_name: Program Upload
   executors:
   - platform: linux
