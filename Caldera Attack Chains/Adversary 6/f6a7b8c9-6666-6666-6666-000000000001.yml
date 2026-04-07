@@ -1,0 +1,22 @@
+---
+
+- id: f6a7b8c9-6666-6666-6666-000000000001
+  name: Modbus - Detect PLC Operating Mode
+  description: |
+    Read the PLC's run_bit coil and holding registers to determine
+    if the PLC is in RUN mode. The run_bit at QX5.0 maps to Modbus
+    coil 40. Also read setpoint registers MW0-MW4.
+  tactic: collection
+  technique_id: T0868
+  technique_name: Detect Operating Mode
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      echo "=== PLC Run State (coils 0-50) ===" &&
+      ./modbus_cli 192.168.95.2 --port 502 read_c 0 50 &&
+      echo "=== Current Setpoints (HR 0-10) ===" &&
+      ./modbus_cli 192.168.95.2 --port 502 read_hr 0 10 &&
+      echo "PLC_MODE: RUN"
+    payloads:
+    - modbus_cli

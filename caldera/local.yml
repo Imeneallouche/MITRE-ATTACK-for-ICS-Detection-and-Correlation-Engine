@@ -40,6 +40,11 @@ plugins:
 - sandcat
 - stockpile
 - training
+- bacnet
+- dnp3
+- profinet
+- iec61850
+- gems
 port: 8888
 reachable_host_traits:
 - remote.host.fqdn

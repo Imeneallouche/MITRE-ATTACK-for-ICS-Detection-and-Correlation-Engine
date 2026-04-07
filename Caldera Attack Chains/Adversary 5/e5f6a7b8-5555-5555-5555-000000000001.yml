@@ -1,0 +1,22 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000001
+  name: ICS Network Connection Enumeration
+  description: |
+    Enumerate active Modbus TCP connections and scan for all Modbus
+    servers on the ICS network from the trusted EWS position.
+  tactic: discovery
+  technique_id: T0840
+  technique_name: Network Connection Enumeration
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      echo "=== Active connections ===" &&
+      ss -tunap 2>/dev/null | grep -E '502|8080|55555' &&
+      echo "=== Modbus hosts on ICS net ===" &&
+      for ip in $(seq 1 254); do
+        (echo > /dev/tcp/192.168.95.$ip/502) 2>/dev/null &&
+        echo "MODBUS_HOST: 192.168.95.$ip";
+      done
+    timeout: 120

