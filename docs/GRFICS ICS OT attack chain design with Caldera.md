@@ -237,13 +237,13 @@ description: >
 adversary_id: cc001111-aaaa-bbbb-cccc-000000000001
 objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
 atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS subnet
+- a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
 - 9360ba0d-46a3-47a1-bbe6-e6c875790500  # Read device info (existing)
-- a1b2c3d4-1111-1111-1111-000000000003  # Enumerate all I/O
-- a1b2c3d4-1111-1111-1111-000000000002  # Read tank pressure/level
-- a1b2c3d4-1111-1111-1111-000000000004  # Close purge valve
-- a1b2c3d4-1111-1111-1111-000000000005  # Force feed open
-- a1b2c3d4-1111-1111-1111-000000000002  # Verify pressure rising
+- a1b2c3d4-1111-1111-1111-000000000003  # Modbus - Enumerate All Process I/O (Point & Tag Identification : T0861)
+- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
+- a1b2c3d4-1111-1111-1111-000000000004  # Modbus - Close Purge Valve (Manipulation of Control : T0831 )
+- a1b2c3d4-1111-1111-1111-000000000005  # Modbus - Force Feed 1 Valve Open (Manipulation of Control : T0831)
+- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
 ```
 
 #### Step 4: Configure and Run Operation
@@ -396,7 +396,7 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
   name: OpenPLC - Download Running Program
   description: Download the currently active Structured Text program from OpenPLC
   tactic: collection
-  technique_id: T0843
+  technique_id: T0845
   technique_name: Program Upload
   executors:
   - platform: linux
@@ -514,12 +514,12 @@ description: >
 adversary_id: cc002222-aaaa-bbbb-cccc-000000000002
 objective: 495a9828-cab1-44dd-a0ca-66e58177d8cc
 atomic_ordering:
-- a1b2c3d4-1111-1111-1111-000000000001  # Network scan
-- b2c3d4e5-2222-2222-2222-000000000001  # PLC default creds
-- b2c3d4e5-2222-2222-2222-000000000002  # Download current program
-- b2c3d4e5-2222-2222-2222-000000000003  # Upload malicious ST
-- b2c3d4e5-2222-2222-2222-000000000004  # Compile and start
-- a1b2c3d4-1111-1111-1111-000000000002  # Verify tank pressure rising
+- a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
+- b2c3d4e5-2222-2222-2222-000000000001  # OpenPLC - Default Credential Access (Default Credentials : T0812)
+- b2c3d4e5-2222-2222-2222-000000000002  # OpenPLC - Download Running Program (Program Upload : T0845)
+- b2c3d4e5-2222-2222-2222-000000000003  # OpenPLC - Upload Malicious Control Logic (Modify Program : T0889)
+- b2c3d4e5-2222-2222-2222-000000000004  # OpenPLC - Compile and Run Malicious Logic (Modify Program : T0889)
+- a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
 ```
 
 #### Step 4: Operation Setup
