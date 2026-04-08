@@ -39,6 +39,8 @@ class NormalizedEvent:
     log_message: str
     fields: Dict[str, Any]
     raw_source: Dict[str, Any]
+    mitre_dc_candidates: List[str] = field(default_factory=list)
+    mitre_keyword_hits: Dict[str, List[str]] = field(default_factory=dict)
 
 
 @dataclass

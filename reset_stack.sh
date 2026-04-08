@@ -11,8 +11,14 @@ docker volume rm mitre-attack-for-ics-detection-and-correlation-engine_elasticse
 echo "=== Deleting shared logs ==="
 rm -rf shared_logs
 
+echo "=== Re-initializing shared logs ==="
+./init_shared_logs.sh
+
+
 echo "=== Restarting full stack ==="
 docker compose up -d
 
 
 echo "=== Reset complete ✅ ==="
+
+./setup_ssh_rsyslog.sh

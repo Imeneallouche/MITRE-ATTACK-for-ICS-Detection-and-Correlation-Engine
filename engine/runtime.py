@@ -138,6 +138,9 @@ class DetectionRuntime:
                 alerts = self._poll_and_process(checkpoint)
                 if alerts:
                     LOG.info("Emitted %s alerts in this cycle.", alerts)
+                pruned = self.correlation.prune_expired(datetime.now(tz=timezone.utc))
+                if pruned:
+                    LOG.debug("Pruned %s expired correlation groups.", pruned)
             except Exception:
                 LOG.exception("Error in polling cycle")
             time.sleep(self.config.polling_interval_seconds)

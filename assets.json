@@ -2,8 +2,48 @@
   "assets": [
     {
       "asset_id": "simulation",
-      "asset_name": "ICS Simulation",
+      "asset_name": "ICS Simulation (Feed 1)",
       "asset_ip": "192.168.95.10",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation (Feed 2)",
+      "asset_ip": "192.168.95.11",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation (Purge)",
+      "asset_ip": "192.168.95.12",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation (Product)",
+      "asset_ip": "192.168.95.13",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation (Tank)",
+      "asset_ip": "192.168.95.14",
+      "zone": "ics-net",
+      "role": "simulation",
+      "is_ics_asset": true
+    },
+    {
+      "asset_id": "simulation",
+      "asset_name": "ICS Simulation (Analyzer)",
+      "asset_ip": "192.168.95.15",
       "zone": "ics-net",
       "role": "simulation",
       "is_ics_asset": true
