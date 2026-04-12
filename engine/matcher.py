@@ -1,71 +1,74 @@
+"""DataComponent matcher with scientific multi-signal scoring.
+
+Uses the ScoringEngine for mathematically grounded similarity computation
+and provides ICS-specific field mappings for GRFICS log alignment.
+"""
 from __future__ import annotations
 
-import re
 import uuid
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .feature_extractor import infer_categories
 from .models import CandidateMatch, DataComponentProfile, NormalizedEvent
-
-
-def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip().lower())
-
-
-def _tokenize_channel(channel: str) -> List[str]:
-    clean = re.sub(r"[^a-zA-Z0-9_:/.-]+", " ", channel.lower())
-    tokens = [t for t in clean.split() if len(t) > 2]
-    stop = {"none", "event", "events", "log", "logs", "and", "with", "for", "the"}
-    return [t for t in tokens if t not in stop]
-
-
-def fuzzy_channel_match(text: str, channel: str) -> float:
-    if not channel or channel.lower() == "none":
-        return 0.0
-    txt = _normalize(text)
-    channel_norm = _normalize(channel)
-    if channel_norm in txt:
-        return 1.0
-
-    tokens = _tokenize_channel(channel)
-    if not tokens:
-        return 0.0
-    matched = sum(1 for t in tokens if t in txt)
-    ratio = matched / len(tokens)
-    if ratio >= 0.8:
-        return 1.0
-    if ratio >= 0.6:
-        return 0.7
-    if ratio >= 0.4:
-        return 0.4
-    return 0.0
-
+from .scorer import ScoringEngine
 
 ICS_FIELD_MAP: Dict[str, List[str]] = {
-    "DC0109": ["ics.alarm_type", "ics.severity", "ics.protocol", "modbus.function_code",
-                "modbus.exception_code", "process_alarm"],
-    "DC0108": ["ics.severity", "ics.protocol", "modbus.exception_code", "kern",
-                "reboot", "shutdown"],
-    "DC0107": ["ics.protocol", "modbus.function_code", "pacct"],
-    "DC0078": ["src_ip", "dst_ip", "src_port", "dest_port", "protocol", "bytes",
-               "packets", "duration", "netfilter"],
+    "DC0109": [
+        "ics.alarm_type", "ics.severity", "ics.protocol", "modbus.function_code",
+        "modbus.exception_code", "process_alarm", "alarm_state", "setpoint",
+    ],
+    "DC0108": [
+        "ics.severity", "ics.protocol", "modbus.exception_code", "kern",
+        "reboot", "shutdown", "device_fault",
+    ],
+    "DC0107": [
+        "ics.protocol", "modbus.function_code", "pacct", "process_value",
+        "current_value", "tag_name",
+    ],
+    "DC0078": [
+        "src_ip", "dst_ip", "src_port", "dest_port", "protocol", "bytes",
+        "packets", "duration", "netfilter", "action",
+    ],
     "DC0082": ["src_ip", "dst_ip", "src_port", "dest_port", "protocol"],
-    "DC0085": ["src_ip", "dst_ip", "payload", "event_type", "alert.signature",
-               "ics.protocol", "modbus.function_code"],
-    "DC0032": ["syslog_program", "syslog_pid", "audit_type", "process_name", "pid",
-               "audit.exe", "audit.comm"],
-    "DC0033": ["syslog_program", "syslog_pid", "audit_type", "exit_code",
-               "audit.exe"],
-    "DC0067": ["auth_user", "src_ip", "auth_method", "pam_service", "session_id"],
-    "DC0038": ["syslog_program", "event_type", "status_code", "request_method"],
+    "DC0085": [
+        "src_ip", "dst_ip", "payload", "event_type", "alert.signature",
+        "ics.protocol", "modbus.function_code", "app_proto",
+    ],
+    "DC0032": [
+        "syslog_program", "syslog_pid", "audit_type", "process_name", "pid",
+        "audit.exe", "audit.comm", "command",
+    ],
+    "DC0033": [
+        "syslog_program", "syslog_pid", "audit_type", "exit_code",
+        "audit.exe", "signal",
+    ],
+    "DC0067": [
+        "auth_user", "src_ip", "auth_method", "pam_service", "session_id",
+        "sshd", "accepted",
+    ],
+    "DC0038": [
+        "syslog_program", "event_type", "status_code", "request_method",
+        "http_path", "catalina", "flask",
+    ],
     "DC0061": ["file_path", "file_name", "audit.name", "audit.nametype"],
     "DC0039": ["file_path", "file_name", "audit.name"],
     "DC0040": ["file_path", "file_name", "audit.name"],
     "DC0002": ["auth_user", "src_ip", "auth_method", "pam_service"],
+    "DC0064": [
+        "command", "cmdline", "audit.exe", "audit.comm", "syslog_program",
+    ],
+    "DC0004": ["firmware", "module", "kern", "insmod", "modprobe"],
+    "DC0016": ["module", "kern", "insmod", "modprobe", "lsmod"],
+    "DC0029": ["script", "python", "bash", "sh", "interpreter"],
+    "DC0060": ["service", "systemctl", "supervisor", "daemon"],
+    "DC0110": ["asset", "inventory", "device", "hostname"],
+    "DC0111": ["software", "version", "package", "binary"],
 }
 
 
 class DataComponentMatcher:
+    """Matches normalized events against DC profiles using scientific scoring."""
+
     def __init__(
         self,
         profiles: Sequence[DataComponentProfile],
@@ -75,22 +78,24 @@ class DataComponentMatcher:
     ) -> None:
         self.profiles = list(profiles)
         self._profile_by_id = {p.id: p for p in self.profiles}
-        self.weights = scoring_weights
         self.candidate_threshold = candidate_threshold
         self.high_confidence_threshold = high_confidence_threshold
+
+        self.scorer = ScoringEngine(weights=scoring_weights)
+        for p in self.profiles:
+            self.scorer.precompile_keywords(p.id, p.keywords)
 
     def match_event(self, event: NormalizedEvent) -> List[CandidateMatch]:
         candidates: List[CandidateMatch] = []
         enriched_ids = set(event.mitre_dc_candidates)
-
-        scored_ids: set = set()
+        scored_ids: Set[str] = set()
 
         if enriched_ids:
             for dc_id in enriched_ids:
                 profile = self._profile_by_id.get(dc_id)
                 if profile is None:
                     continue
-                candidate = self._score_event_against_profile(event, profile)
+                candidate = self._score(event, profile)
                 scored_ids.add(dc_id)
                 if candidate.similarity_score >= self.candidate_threshold:
                     candidates.append(candidate)
@@ -99,38 +104,57 @@ class DataComponentMatcher:
             for profile in self.profiles:
                 if profile.id in scored_ids:
                     continue
-                candidate = self._score_event_against_profile(event, profile)
+                candidate = self._score(event, profile)
                 if candidate.similarity_score >= self.candidate_threshold:
                     candidates.append(candidate)
 
         candidates.sort(key=lambda c: c.similarity_score, reverse=True)
+
         if len(candidates) > 1:
             top = candidates[0].similarity_score
             for cand in candidates[1:]:
                 if top - cand.similarity_score <= 0.10:
                     cand.is_ambiguous = True
                     candidates[0].is_ambiguous = True
+
         return candidates
 
-    def _score_event_against_profile(self, event: NormalizedEvent, profile: DataComponentProfile) -> CandidateMatch:
-        source_score, source_evidence = self._score_log_source(event, profile)
-        keyword_score, keyword_hits = self._score_keywords(event, profile)
-        field_score, field_hits = self._score_fields(event, profile)
-        category_score, category_hits = self._score_categories(event, profile)
-        channel_score, channel_hit = self._score_channel(event, profile)
+    def _score(self, event: NormalizedEvent, profile: DataComponentProfile) -> CandidateMatch:
+        ls_names = [ls.name for ls in profile.log_sources]
+        ls_score, ls_evidence = self.scorer.score_log_source(
+            event.mitre_dc_candidates,
+            event.log_source_normalized,
+            profile.id,
+            ls_names,
+        )
+
+        event_text = event.log_message + " " + " ".join(str(v) for v in event.fields.values())
+        logstash_kw = event.mitre_keyword_hits.get(profile.id)
+        kw_score, kw_hits = self.scorer.score_keywords(
+            event_text, profile.id, profile.keywords, logstash_kw,
+        )
+
+        ics_fields = ICS_FIELD_MAP.get(profile.id)
+        fld_score, fld_hits = self.scorer.score_fields(
+            set(event.fields.keys()), profile.fields, ics_fields,
+        )
+
+        event_cats = set(event.categories) if event.categories else set(
+            infer_categories(event.log_type, event.log_source_normalized, event.log_message)
+        )
+        cat_score, cat_hits = self.scorer.score_categories(event_cats, profile.categories)
+
+        channels = [ls.channel for ls in profile.log_sources]
+        ch_score, ch_hit = self.scorer.score_channel(event_text, channels)
 
         signal_scores = {
-            "log_source_match": source_score,
-            "keyword_match": keyword_score,
-            "field_match": field_score,
-            "category_match": category_score,
-            "channel_match": channel_score,
+            "log_source_match": ls_score,
+            "keyword_match": kw_score,
+            "field_match": fld_score,
+            "category_match": cat_score,
+            "channel_match": ch_score,
         }
-
-        similarity = 0.0
-        for key, weight in self.weights.items():
-            similarity += signal_scores.get(key, 0.0) * float(weight)
-        similarity = max(0.0, min(1.0, round(similarity, 4)))
+        similarity = self.scorer.compute_composite(signal_scores)
 
         confidence_tier = "low"
         if similarity >= self.high_confidence_threshold:
@@ -139,11 +163,11 @@ class DataComponentMatcher:
             confidence_tier = "medium"
 
         evidence = {
-            "matched_log_source": source_evidence,
-            "matched_keywords": keyword_hits,
-            "matched_fields": field_hits,
-            "matched_categories": category_hits,
-            "matched_channel": channel_hit,
+            "matched_log_source": ls_evidence,
+            "matched_keywords": kw_hits,
+            "matched_fields": fld_hits,
+            "matched_categories": cat_hits,
+            "matched_channel": ch_hit,
         }
 
         return CandidateMatch(
@@ -156,72 +180,3 @@ class DataComponentMatcher:
             confidence_tier=confidence_tier,
             event=event,
         )
-
-    def _score_log_source(self, event: NormalizedEvent, profile: DataComponentProfile) -> Tuple[float, str]:
-        if profile.id in event.mitre_dc_candidates:
-            return 1.0, f"logstash:{event.log_source_normalized}->{profile.id}"
-
-        src = event.log_source_normalized.lower()
-        best_score = 0.0
-        matched = ""
-        for ls in profile.log_sources:
-            name = ls.name.lower()
-            if src == name:
-                return 1.0, ls.name
-            if ":" in src and ":" in name and src.split(":")[0] == name.split(":")[0]:
-                if 0.7 > best_score:
-                    best_score = 0.7
-                    matched = ls.name
-        return best_score, matched
-
-    def _score_keywords(self, event: NormalizedEvent, profile: DataComponentProfile) -> Tuple[float, List[str]]:
-        logstash_hits = event.mitre_keyword_hits.get(profile.id, [])
-        if logstash_hits:
-            denom = max(len(profile.keywords), 1)
-            return min(len(logstash_hits) / denom, 1.0), logstash_hits
-
-        if not profile.keywords:
-            return 0.0, []
-        text = _normalize(event.log_message + " " + " ".join(map(str, event.fields.values())))
-        hits = []
-        for keyword in profile.keywords:
-            kw = _normalize(str(keyword))
-            if kw and kw in text:
-                hits.append(keyword)
-        return min(len(hits) / max(len(profile.keywords), 1), 1.0), hits
-
-    def _score_fields(self, event: NormalizedEvent, profile: DataComponentProfile) -> Tuple[float, List[str]]:
-        event_fields_lower = {str(k).lower() for k in event.fields.keys()}
-
-        ics_fields = ICS_FIELD_MAP.get(profile.id, [])
-        if ics_fields:
-            hits = [f for f in ics_fields if f.lower() in event_fields_lower]
-            if hits:
-                return min(len(hits) / max(len(ics_fields), 1), 1.0), hits
-
-        if not profile.fields:
-            return 0.0, []
-        hits = []
-        for field_name in profile.fields:
-            if field_name.lower() in event_fields_lower:
-                hits.append(field_name)
-        return min(len(hits) / max(len(profile.fields), 1), 1.0), hits
-
-    def _score_categories(self, event: NormalizedEvent, profile: DataComponentProfile) -> Tuple[float, List[str]]:
-        inferred = set(infer_categories(event.log_type, event.log_source_normalized, event.log_message))
-        profile_cats = set(x.lower() for x in profile.categories)
-        overlap = inferred.intersection(profile_cats)
-        if overlap:
-            return min(len(overlap) / max(len(profile_cats), 1), 1.0), sorted(overlap)
-        return 0.0, []
-
-    def _score_channel(self, event: NormalizedEvent, profile: DataComponentProfile) -> Tuple[float, str]:
-        text = event.log_message + " " + " ".join(f"{k}={v}" for k, v in event.fields.items())
-        best = 0.0
-        best_channel = ""
-        for ls in profile.log_sources:
-            score = fuzzy_channel_match(text, ls.channel)
-            if score > best:
-                best = score
-                best_channel = ls.channel
-        return best, best_channel

@@ -1,3 +1,4 @@
+"""Configuration loader for the ICS Detection Engine."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -70,6 +71,31 @@ class EngineConfig:
     @property
     def assets_file(self) -> Path:
         return Path(self.raw["paths"]["assets_file"])
+
+    @property
+    def neo4j_enabled(self) -> bool:
+        neo = self.raw.get("neo4j", {})
+        return bool(neo.get("enabled", False))
+
+    @property
+    def neo4j_uri(self) -> str:
+        return str(self.raw.get("neo4j", {}).get("uri", ""))
+
+    @property
+    def neo4j_username(self) -> str:
+        return str(self.raw.get("neo4j", {}).get("username", "neo4j"))
+
+    @property
+    def neo4j_password(self) -> str:
+        return str(self.raw.get("neo4j", {}).get("password", ""))
+
+    @property
+    def neo4j_cache_ttl(self) -> int:
+        return int(self.raw.get("neo4j", {}).get("cache_ttl_seconds", 3600))
+
+    @property
+    def technique_mapper(self) -> Dict[str, Any]:
+        return self.raw.get("technique_mapper", {})
 
 
 def load_config(path: Path) -> EngineConfig:

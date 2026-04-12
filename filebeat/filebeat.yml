@@ -83,6 +83,39 @@ filebeat.inputs:
       log_type: "sim_error"
     fields_under_root: true
 
+  - type: filestream
+    id: simulation-supervisord-main
+    paths: ["/shared_logs/simulation/supervisor/supervisord.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "sim_supervisord"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-nginx-access
+    paths: ["/shared_logs/simulation/nginx/access.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "nginx_access"
+    fields_under_root: true
+
+  - type: filestream
+    id: simulation-nginx-error
+    paths: ["/shared_logs/simulation/nginx/error.log"]
+    fields:
+      asset_id: "simulation"
+      asset_name: "ICS Simulation"
+      asset_ip: "192.168.95.10"
+      asset_zone: "ics-net"
+      log_type: "nginx_error"
+    fields_under_root: true
+
   # ═══════════════════════════════════════════════════════════════════════════
   # PLC (192.168.95.2 – OpenPLC controller)
   # ═══════════════════════════════════════════════════════════════════════════
@@ -151,6 +184,17 @@ filebeat.inputs:
       asset_ip: "192.168.95.2"
       asset_zone: "ics-net"
       log_type: "kern"
+    fields_under_root: true
+
+  - type: filestream
+    id: plc-openplc-debug
+    paths: ["/shared_logs/plc/openplc_debug.log"]
+    fields:
+      asset_id: "plc"
+      asset_name: "PLC Controller"
+      asset_ip: "192.168.95.2"
+      asset_zone: "ics-net"
+      log_type: "openplc_debug"
     fields_under_root: true
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -234,13 +278,47 @@ filebeat.inputs:
       log_type: "pacct"
     fields_under_root: true
 
+  - type: filestream
+    id: ews-supervisord-root
+    paths: ["/shared_logs/ews/supervisord.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "ews_supervisord"
+    fields_under_root: true
+
+  - type: filestream
+    id: ews-desktop-vnc
+    paths:
+      - "/shared_logs/ews/xvfb.log"
+      - "/shared_logs/ews/xvfb.err"
+      - "/shared_logs/ews/xfce.log"
+      - "/shared_logs/ews/xfce.err"
+      - "/shared_logs/ews/x11vnc.log"
+      - "/shared_logs/ews/x11vnc.out"
+      - "/shared_logs/ews/x11vnc.err"
+      - "/shared_logs/ews/novnc.out"
+      - "/shared_logs/ews/novnc.err"
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "ews_desktop"
+    fields_under_root: true
+
   # ═══════════════════════════════════════════════════════════════════════════
   # HMI (192.168.90.107 – SCADA-LTS / ScadaBR on Tomcat)
   # ═══════════════════════════════════════════════════════════════════════════
 
   - type: filestream
     id: hmi-catalina
-    paths: ["/shared_logs/hmi/catalina/*.log"]
+    paths:
+      - "/shared_logs/hmi/catalina/*.log"
+      - "/shared_logs/hmi/catalina/*.out"
+      - "/shared_logs/hmi/catalina/*.txt"
     fields:
       asset_id: "hmi"
       asset_name: "HMI ScadaLTS"
@@ -360,6 +438,81 @@ filebeat.inputs:
       asset_ip: "192.168.95.200"
       asset_zone: "perimeter"
       log_type: "netfilter"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-ulogd-text
+    paths: ["/shared_logs/router/netfilter/ulogd.log"]
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "ulogd"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-suricata-fast
+    paths: ["/shared_logs/router/fast.log"]
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "suricata_fast"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-suricata-engine
+    paths:
+      - "/shared_logs/router/suricata.log"
+      - "/shared_logs/router/stats.log"
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "suricata_engine"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-suricata-appproto
+    paths:
+      - "/shared_logs/router/http.log"
+      - "/shared_logs/router/tls.log"
+      - "/shared_logs/router/alert-debug.log"
+      - "/shared_logs/router/tcp-data.log"
+      - "/shared_logs/router/http-data.log"
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "suricata_app"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-suricata-stdio
+    paths:
+      - "/shared_logs/router/suricata-stdout.log"
+      - "/shared_logs/router/suricata-stderr.log"
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "suricata_stdio"
+    fields_under_root: true
+
+  - type: filestream
+    id: router-supervisord
+    paths: ["/shared_logs/router/supervisor/supervisord.log"]
+    fields:
+      asset_id: "router"
+      asset_name: "ICS Router/Firewall"
+      asset_ip: "192.168.95.200"
+      asset_zone: "perimeter"
+      log_type: "router_supervisord"
     fields_under_root: true
 
   - type: filestream

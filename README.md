@@ -1,76 +1,182 @@
-# ICS DataComponent Detection and Correlation Engine
+# MITRE ATT&CK for ICS — Detection and Correlation Engine
 
-This repository now includes a full implementation scaffold for a near-real-time ICS/OT detection system that:
+Near-real-time detection pipeline for **GRFICS**-style ICS/OT labs: logs flow through **Filebeat → Logstash → Elasticsearch**; the Python engine polls `ics-*` indices, matches events to **MITRE ATT&CK for ICS DataComponents**, optionally maps to **techniques** via a **Neo4j** knowledge graph (v18 schema), **correlates** multi-stage activity, and writes **explainable alerts** to Elasticsearch.
 
-- ingests logs with Filebeat and Logstash,
-- normalizes and enriches events in Elasticsearch,
-- matches events to MITRE ATT&CK for ICS DataComponents from `datacomponents/*.json`,
-- computes explainable similarity scores,
-- correlates events into multi-step detections,
-- emits structured alerts back into Elasticsearch.
+---
 
-## Directory Layout
+## What the engine does
 
-- `filebeat/filebeat.yml`: Per-asset log collection config aligned to the provided `docker-compose.yml`.
-- `logstash/pipeline/*.conf`: Input, parse, enrich, and output routing pipeline stages.
-- `logstash/mitre_mapping/log_source_to_dc.yml`: Log source to DataComponent mapping.
-- `logstash/mitre_mapping/dc_keywords.json`: Keywords per DataComponent.
-- `logstash/mitre_mapping/keyword_tagger.rb`: Keyword-based enrichment for Logstash events.
-- `config/detection.yml`: Runtime tuning and thresholds for detection engine.
-- `assets.json`: Asset inventory including ICS assets and simulation-only assets (`kali`, `caldera`).
-- `engine/`: Python implementation (models, loader, matcher, scorer, correlation, ES integration).
-- `scripts/generate_mitre_mapping.py`: Generates mapping files from `datacomponents/*.json`.
-- `elasticsearch/templates/*.json`: Index templates for alerts and correlations.
+| Stage | Behavior |
+|--------|----------|
+| **Ingest (upstream)** | Filebeat ships logs; Logstash sets `log_source_normalized`, `mitre_dc_candidates`, `mitre_keyword_hits`. |
+| **Normalize** | Each ES hit becomes a `NormalizedEvent` (asset, IP, categories, enrichment fields). |
+| **Match** | **Weighted similarity** across five signals: log source, keywords, fields, categories, channel (see [Scoring model](#scoring-model)). |
+| **Technique inference** | **Neo4j** path `DataComponent ← Analytic ← DetectionStrategy → Technique`, or **offline fallback** DC→technique map if the graph is disabled or unreachable. |
+| **Correlate** | Temporal groups per asset (with cross-asset rules for network DCs), **chain-step boosts** for known DC transitions, repeat escalation. |
+| **Alert** | Documents in `ics-alerts-*`; correlation summaries in `ics-correlations-*`. |
 
-## Engine Features Implemented
+**Excluded by design:** events whose `asset_id` is `kali` or `caldera` (attacker/C2 simulation).
 
-- **Streaming mode** (`--mode stream`): PIT + `search_after` polling.
-- **Oneshot mode** (`--mode oneshot`): Single polling cycle.
-- **Backtest mode** (`--mode backtest --start ... --end ...`): Historical replay.
-- **Weighted scoring (0..1)**:
-  - log source match,
-  - keyword match,
-  - field overlap,
-  - category alignment,
-  - channel matching.
-- **Correlation**:
-  - per-asset temporal grouping,
-  - chain rule boosts,
-  - repeated event aggregation.
-- **Alert emission**:
-  - full structured JSON output,
-  - evidence and signal score transparency,
-  - suppression window to reduce duplicates.
+For a full design reference (formulas, graph queries, module list), see [`docs/ics_detection_engine_design.md`](docs/ics_detection_engine_design.md).
 
-## Install
+---
+
+## Repository layout
+
+| Path | Role |
+|------|------|
+| `engine/` | Python package: runtime, config, models, feature extraction, DC loader, **scorer** (Jaccard / Aho-Corasick / optional IDF), **matcher**, **correlation**, **alerting**, **Neo4j client**, **technique mapper**, ES client, index templates. |
+| `engine/__main__.py` | Entry: `python3 -m engine ...` |
+| `config/detection.yml` | Thresholds, weights, correlation, Elasticsearch, **Neo4j**, technique-mapper knobs, paths, checkpoint. |
+| `datacomponents/*.json` | Normalized MITRE ATT&CK for ICS DataComponent profiles (36 files). |
+| `assets.json` | Asset inventory (IPs, zones, `is_ics_asset`, roles) for attribution and penalties. |
+| `filebeat/filebeat.yml` | Per-asset log collection: all GRFICS `shared_logs` exports (Linux auth/syslog/audit/kern/cron/pacct, simulation process alarms + supervisor + nginx, PLC app + OpenPLC debug, HMI Tomcat + supervisor, router Suricata EVE/fast/engine/app + ulogd + netfilter JSON + Flask + supervisor, EWS desktop/VNC logs). |
+| `logstash/pipeline/*.conf` | Parse, normalize, route; `20-enrich-mitre.conf` applies MITRE mapping. |
+| `logstash/mitre_mapping/log_source_to_dc.yml` | Maps `log_source_normalized` → DC ID list. |
+| `logstash/mitre_mapping/dc_keywords.json` | Keywords per DC (Ruby keyword tagger). |
+| `logstash/mitre_mapping/keyword_tagger.rb` | Populates `mitre_keyword_hits`. |
+| `docker-compose.yml` | GRFICS stack + Elasticsearch, Logstash, Kibana, Filebeat, etc. |
+| `scripts/generate_mitre_mapping.py` | Regenerates mapping artifacts from `datacomponents/`. |
+| `docs/ics_detection_engine_design.md` | Architecture, scoring, correlation, Neo4j, alert schema. |
+| `docs/GRFICS ICS OT attack chain design with Caldera*.md` | Caldera adversary chains for the lab. |
+
+---
+
+## Scoring model
+
+Composite similarity for an event vs. a DataComponent profile:
+
+\[
+S = w_{ls} S_{ls} + w_{kw} S_{kw} + w_{fld} S_{fld} + w_{cat} S_{cat} + w_{ch} S_{ch}
+\]
+
+| Signal | Default weight | Meaning |
+|--------|----------------|---------|
+| \(S_{ls}\) | **0.40** | Log source: strongest when `profile.id ∈ mitre_dc_candidates` (Logstash mapping). |
+| \(S_{kw}\) | **0.20** | Keyword overlap; **Aho-Corasick** multi-pattern scan when `pyahocorasick` is installed. |
+| \(S_{fld}\) | **0.10** | **Jaccard**-style overlap on field keys; **ICS_FIELD_MAP** adds OT-specific keys per DC. |
+| \(S_{cat}\) | **0.20** | **Jaccard** overlap between inferred categories and the DC profile’s categories. |
+| \(S_{ch}\) | **0.10** | Fuzzy match of DC log-source *channel* text against the event body. |
+
+Values are clamped to \([0,1]\). Thresholds in `config/detection.yml`: `candidate_threshold` (minimum match), `alert_threshold` (emit alert), `high_confidence_threshold`, `unknown_asset_penalty`.
+
+---
+
+## Knowledge graph and techniques
+
+- **With Neo4j** (`neo4j.enabled: true` and valid `uri` / credentials): at startup the engine **warms a cache** of DC→technique paths from the v18 graph (via `DetectionStrategy` / `Analytic` / `USES` / `DETECTS`).
+- **Without Neo4j** (default `enabled: false`) or on connection failure: **fallback** DC→technique suggestions are used so alerts still include probable ICS techniques.
+
+Technique ranking uses configurable weights `technique_mapper.alpha_group` and `alpha_asset` (see `config/detection.yml` and `docs/ics_detection_engine_design.md`).
+
+---
+
+## Correlation
+
+- **Window:** `correlation.window_seconds` (default 300s) for grouping matches on the same asset.
+- **Chain rules:** Dozens of allowed DC→DC transitions (e.g. network recon → content → process alarm); **chain_step_boost** increases the aggregate score when a transition matches.
+- **Cross-asset:** Network-related DCs (e.g. DC0078, DC0082, DC0085) can correlate across assets.
+- **Repeat escalation:** Same DC firing often within a group adds **correlation_boost** (capped by `max_correlation_boost`).
+
+---
+
+## Prerequisites
+
+- **Python 3.10+** recommended.
+- **Elasticsearch 8.x** reachable from the machine running the engine (same host as `docker-compose` → typically `http://localhost:9200`).
+- **Indices:** populated `ics-*` events (run Filebeat + Logstash + GRFICS stack or your own pipeline that produces the same enriched fields).
+- **Optional:** **Neo4j** 5.x with the MITRE ATT&CK for ICS v18 graph loaded (see the separate `MITRE-ATTACK-for-ICS-Knowledge-Graph` project).
+
+---
+
+## Step-by-step: run the engine
+
+### 1. Clone and enter the repository
+
+```bash
+cd /path/to/MITRE-ATTACK-for-ICS-Detection-and-Correlation-Engine
+```
+
+### 2. (Optional) Bring up the full lab stack
+
+If you use the bundled `docker-compose.yml` (GRFICS + Elastic + Logstash + Filebeat):
+
+```bash
+chmod +x init_shared_logs.sh 2>/dev/null || true
+./init_shared_logs.sh   # if present; creates shared log dirs
+docker compose up -d elasticsearch logstash kibana filebeat
+# ... plus GRFICS services as needed for logs
+```
+
+Wait until Elasticsearch is healthy (`curl -s http://localhost:9200/_cluster/health`).
+
+### 3. Python virtual environment and dependencies
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Generate MITRE Mapping Artifacts
+This installs `elasticsearch`, `PyYAML`, `python-dateutil`, `pyahocorasick`, `neo4j`, etc.
+
+### 4. Configure the engine
+
+Edit **`config/detection.yml`**:
+
+- **`elasticsearch.hosts`:** e.g. `http://localhost:9200` or `http://elasticsearch:9200` if the engine runs inside the same Docker network.
+- **`elasticsearch.source_index_pattern`:** default `ics-*` (must match your enriched indices).
+- **`paths.datacomponents_dir`** and **`paths.assets_file`:** defaults `./datacomponents` and `./assets.json` (paths are relative to the **current working directory** when you launch the engine).
+- **`engine.checkpoint_file`:** default `./state/engine_checkpoint.json` — ensure the directory exists (see step 5).
+- **Optional Neo4j:** set `neo4j.enabled: true`, `neo4j.uri` (e.g. `bolt://localhost:7687`), `username`, `password`.
+
+### 5. Create state directory (first run)
+
+```bash
+mkdir -p state
+```
+
+The engine stores the Elasticsearch polling checkpoint in `state/engine_checkpoint.json` (path from `config/detection.yml`).
+
+### 6. (Optional) Regenerate Logstash MITRE mapping files
+
+If you change `datacomponents/*.json`:
 
 ```bash
 python3 scripts/generate_mitre_mapping.py
 ```
 
-## Run Detection Engine
+Restart Logstash after updating `logstash/mitre_mapping/*`.
 
-### Stream Mode (default)
+### 7. Install Elasticsearch index templates (recommended once)
+
+Registers mappings for `ics-alerts-*` and `ics-correlations-*`:
 
 ```bash
+source .venv/bin/activate
+python3 -m engine --config config/detection.yml --bootstrap-templates
+```
+
+Run this anytime the alert/correlation template definitions in `engine/templates.py` change.
+
+### 8. Run the engine
+
+Run from the **repository root** so relative paths in `config/detection.yml` resolve.
+
+| Mode | Command | Use case |
+|------|---------|----------|
+| **Stream** (default) | `python3 -m engine --config config/detection.yml --mode stream` | Continuous near-real-time polling (sleeps `polling_interval_seconds` between cycles). |
+| **Oneshot** | `python3 -m engine --config config/detection.yml --mode oneshot` | Single poll cycle; cron or smoke test. |
+| **Backtest** | `python3 -m engine --config config/detection.yml --mode backtest --start <ISO8601> --end <ISO8601>` | Replay a time range with PIT + `search_after`. |
+
+**First-time combined run (templates + stream):**
+
+```bash
+source .venv/bin/activate
 python3 -m engine --config config/detection.yml --mode stream --bootstrap-templates
 ```
 
-### Oneshot
-
-```bash
-python3 -m engine --config config/detection.yml --mode oneshot --bootstrap-templates
-```
-
-### Backtest
+**Backtest example:**
 
 ```bash
 python3 -m engine --config config/detection.yml --mode backtest \
@@ -79,151 +185,76 @@ python3 -m engine --config config/detection.yml --mode backtest \
   --bootstrap-templates
 ```
 
-## Notes
+**Force-disable Neo4j** (use only YAML + fallback technique mapping):
 
-- Events from `kali` and `caldera` are excluded from ICS alerting by design.
-- Thresholds and scoring weights are configurable in `config/detection.yml`.
-- Checkpoint state is persisted in `state/engine_checkpoint.json`.
-
-
-
-# ICS Detection and Correlation Engine Design
-
-## 1. Architecture Overview
-
-The detection engine processes ICS/OT log events from Elasticsearch, matches them against MITRE ATT&CK for ICS data components, correlates related events into attack chains, and generates alerts.
-
-```
-Filebeat -> Logstash (parse + enrich) -> Elasticsearch -> Detection Engine -> Alerts
-                                                                           -> Correlations
+```bash
+python3 -m engine --config config/detection.yml --mode stream --no-graph
 ```
 
-### Data Flow
+### 9. Verify output
 
-1. **Filebeat** collects logs from all GRFICS containers via volume mounts
-2. **Logstash** parses, normalizes, and enriches each event with:
-   - `log_source_normalized`: canonical log source name (e.g., `ics:modbus_io`)
-   - `mitre_dc_candidates`: list of MITRE ATT&CK data component IDs from `log_source_to_dc.yml`
-   - `mitre_keyword_hits`: dict of `{DC_ID: [matched_keywords]}` from keyword tagger
-3. **Elasticsearch** stores enriched events in `ics-*` indices
-4. **Detection Engine** (Python):
-   a. Polls new events from Elasticsearch via Point-in-Time API
-   b. Normalizes each event into a `NormalizedEvent` struct
-   c. Scores the event against MITRE ATT&CK data component profiles
-   d. Correlates matches into groups by asset and time window
-   e. Applies chain-step boosting for known attack patterns
-   f. Emits alerts and correlation records to dedicated ES indices
+- **Alerts:** index pattern `ics-alerts-*` (or whatever `alert_index_pattern` expands to, e.g. daily `ics-alerts-2026.04.09`).
+- **Correlations:** `ics-correlations-*`.
+- **Kibana:** Discover / Dashboards on those index patterns.
 
-## 2. Scoring Model
+Example query (Dev Tools):
 
-The engine uses a multi-signal weighted scoring model. Each event is scored against each data component profile using five signals:
-
-| Signal | Weight | Description |
-|--------|--------|-------------|
-| `log_source_match` | 0.40 | Whether the Logstash pipeline mapped this event's log source to this data component via `mitre_dc_candidates` |
-| `keyword_match` | 0.20 | Ratio of DC-specific keywords found in the event (from `mitre_keyword_hits` or text search) |
-| `category_match` | 0.20 | Overlap between inferred event categories and the DC profile's categories |
-| `field_match` | 0.10 | Presence of DC-relevant fields (ICS-aware field mapping for OT data components) |
-| `channel_match` | 0.10 | Fuzzy match of log channel descriptors against event content |
-
-### Scoring Formula
-
-```
-similarity = Σ(signal_i × weight_i), clamped to [0, 1]
+```http
+GET ics-alerts-*/_search
+{
+  "size": 5,
+  "sort": [{ "timestamp": "desc" }]
+}
 ```
 
-### Thresholds
+### 10. Operational notes
 
-| Threshold | Value | Purpose |
-|-----------|-------|---------|
-| `candidate_threshold` | 0.35 | Minimum score to consider a DC match |
-| `alert_threshold` | 0.45 | Minimum score to generate an alert |
-| `high_confidence_threshold` | 0.70 | Score for "high confidence" classification |
-| `unknown_asset_penalty` | 0.05 | Score reduction when the source asset is not in `assets.json` |
+- **Checkpoint:** Deleting `state/engine_checkpoint.json` makes the next run re-process from the checkpoint default (`1970-01-01` initial) — use carefully in production.
+- **Dedup:** In-memory dedup cache limits duplicate alerts for identical asset/source/time/message keys.
+- **Logs:** INFO lines on stderr from logger `ics-detector` (and `ics-detector.neo4j` if the graph is used).
 
-### Why `log_source_match` is Weighted Highest
+---
 
-The Logstash pipeline performs deterministic mapping from normalized log sources to data components using the curated `log_source_to_dc.yml` dictionary. This mapping is authoritative -- if Logstash says a `linux:auth` event maps to DC0002 and DC0067, that mapping is correct by definition.
+## CLI reference
 
-The engine trusts this mapping and gives it the highest weight (0.40). The remaining signals provide confidence calibration and help disambiguate when an event maps to multiple DCs.
+| Argument | Description |
+|----------|-------------|
+| `--config PATH` | Path to YAML config (default: `config/detection.yml`). |
+| `--mode stream \| oneshot \| backtest` | Execution mode. |
+| `--start`, `--end` | Required for `backtest` (ISO8601 timestamps). |
+| `--bootstrap-templates` | Push/update ES index templates for alerts and correlations. |
+| `--no-graph` | Disable Neo4j even if enabled in config. |
 
-This design follows the principle established by Mavroeidis and Bromander (2017) in "Cyber Threat Intelligence Model: An Evaluation of Taxonomies" -- structured, curated mappings outperform heuristic text matching for threat classification.
+---
 
-## 3. Correlation Model
+## Engine modules (quick map)
 
-### Temporal Grouping
+| Module | Responsibility |
+|--------|----------------|
+| `engine/runtime.py` | CLI, stream/oneshot/backtest loops, wiring. |
+| `engine/config.py` | Loads `detection.yml` (including Neo4j and technique mapper). |
+| `engine/models.py` | `NormalizedEvent`, `CandidateMatch`, `DetectionAlert`, `TechniqueAttribution`, … |
+| `engine/feature_extractor.py` | ES `_source` → `NormalizedEvent`, categories, enrichment. |
+| `engine/dc_loader.py` | Load DC JSON profiles and `assets.json`. |
+| `engine/scorer.py` | Jaccard, keyword scoring, Aho-Corasick matcher, composite \(S\). |
+| `engine/matcher.py` | Score events vs. DC profiles (`ICS_FIELD_MAP`). |
+| `engine/correlation.py` | Temporal groups, chain rules, cross-asset, pruning. |
+| `engine/neo4j_client.py` | Bolt driver, cache warmup, DC→technique queries. |
+| `engine/technique_mapper.py` | Probable technique + mitigations / reasoning. |
+| `engine/alerting.py` | Build alert documents, suppression window. |
+| `engine/es_client.py` | PIT, poll, index documents. |
+| `engine/templates.py` | Index templates for alerts/correlations. |
 
-Events from the same asset within a configurable time window (default: 300 seconds) are grouped into `CorrelationGroup` objects. Groups track:
+---
 
-- The sequence of distinct data components observed (`chain_ids`)
-- The depth of the attack chain (`chain_depth`)
-- An aggregate score that increases with correlation and chain evidence
+## Attack emulation (Caldera)
 
-### Chain-Step Boosting
+Adversary YAML and abilities live under **`Caldera Attack Chains/`**. Corrected ability snippets and chain notes are in **`docs/GRFICS ICS OT attack chain design with Caldera - CORRECTED.md`**.
 
-The engine maintains a set of known attack-chain transitions (DC pairs that commonly occur in sequence during ICS attacks). When an event's DC follows a known predecessor DC in the same group, the aggregate score receives a chain-step boost (default: +0.12).
+---
 
-Example ICS chain rules:
-- DC0078 (Network Traffic Flow) → DC0085 (Network Traffic Content): reconnaissance escalation
-- DC0067 (Logon Session) → DC0038 (Application Log): credential-based access
-- DC0085 (Network Traffic Content) → DC0109 (Process/Event Alarm): Modbus write → process impact
-- DC0033 (Process Termination) → DC0109 (Process/Event Alarm): service disruption → process impact
+## References
 
-This approach is informed by MITRE ATT&CK for ICS's kill-chain model and the concept of "attack graphs" described by Sheyner et al. (2002).
-
-### Cross-Asset Correlation
-
-Network-related data components (DC0078, DC0082, DC0085) are eligible for cross-asset correlation, reflecting the reality that network events naturally span multiple endpoints.
-
-### Repeat Escalation
-
-When the same data component fires repeatedly for the same asset (≥3 times within the window), an additional correlation boost is applied. This captures the pattern of sustained Modbus write attacks where the same technique is applied repeatedly.
-
-## 4. ICS-Specific Design Decisions
-
-### ICS Field Mapping
-
-The DC JSON profile files define fields using Windows/enterprise terminology (e.g., `EventID`, `ProcessName`, `ParentProcessId`). The GRFICS environment produces Linux and ICS-specific fields. The engine maintains an `ICS_FIELD_MAP` dictionary that maps data component IDs to the actual fields present in GRFICS events:
-
-- DC0109 (Process/Event Alarm): `ics.alarm_type`, `ics.severity`, `modbus.function_code`
-- DC0078 (Network Traffic Flow): `src_ip`, `dst_ip`, `src_port`, `dest_port`, `protocol`
-- DC0085 (Network Traffic Content): `event_type`, `alert.signature`, `ics.protocol`
-
-### Category Alignment
-
-The `infer_categories` function maps GRFICS event content to the category taxonomies used in DC profiles. For ICS events, this includes:
-- `operational_technology`, `process_control`, `safety`, `availability` (for DC0109, DC0108)
-- `network_traffic`, `traffic_analysis`, `deep_packet_inspection` (for DC0078, DC0082, DC0085)
-- `authentication`, `user_session`, `remote_access` (for DC0067, DC0002)
-
-### Asset Mapping
-
-The `assets.json` file maps all GRFICS assets including all six simulation Modbus devices (.10-.15), ensuring Modbus traffic to any device is attributed to a known ICS asset rather than penalized as "unknown."
-
-## 5. Data Component Coverage
-
-The engine covers all 36 MITRE ATT&CK for ICS data components defined in the `datacomponents/` directory. The Logstash `log_source_to_dc.yml` mapping covers the following ICS-specific log sources:
-
-| Log Source | Data Components | GRFICS Origin |
-|-----------|----------------|---------------|
-| `ics:process_alarm` | DC0109, DC0108 | Simulation process alarms |
-| `ics:modbus_io` | DC0109, DC0078, DC0085, DC0107 | Simulation Modbus I/O logs |
-| `ics:plc_app` | DC0109, DC0038, DC0108 | OpenPLC application logs |
-| `ics:sim_process` | DC0107, DC0109, DC0038 | TE simulation process logs |
-| `ics:sim_error` | DC0108, DC0109 | Simulation error logs |
-| `ics:netfilter` | DC0078, DC0082 | Router ulogd/netfilter JSON |
-| `ics:fw_app` | DC0038, DC0061 | Router Flask UI logs |
-| `hmi:catalina` | DC0038, DC0109 | SCADA-LTS Tomcat logs |
-| `hmi:supervisor` | DC0038, DC0060, DC0033 | HMI supervisor logs |
-| `NSM:Flow` | DC0002, ..., DC0085, DC0102 | Suricata network flows |
-| `linux:auth` | DC0002, DC0067 | SSH/PAM authentication |
-| `auditd:*` | DC0032, DC0033, DC0064, ... | Linux audit framework |
-
-## 6. References
-
-- MITRE ATT&CK for ICS, v18.0 (2025). https://attack.mitre.org/techniques/ics/
-- Mavroeidis, V. and Bromander, S. (2017). "Cyber Threat Intelligence Model: An Evaluation of Taxonomies, Sharing Standards, and Ontologies within Cyber Threat Intelligence." European Intelligence and Security Informatics Conference.
-- Sheyner, O. et al. (2002). "Automated Generation and Analysis of Attack Graphs." IEEE Symposium on Security and Privacy.
-- Conti, M. et al. (2018). "A Survey on Industrial Control System Testbeds and Datasets for Security Research." IEEE Communications Surveys & Tutorials.
-- Formby, D., Durbha, S., and Beyah, R. (2017). "Out of Control: Ransomware for Industrial Control Systems." RSA Conference.
-- Fortiphyd Logic (2021). "GRFICSv3: Graphical Realism Framework for Industrial Control Simulations." https://github.com/Fortiphyd/GRFICSv3
+- MITRE ATT&CK for ICS: https://attack.mitre.org/matrices/ics/
+- GRFICS-style lab: Fortiphyd [GRFICSv3](https://github.com/Fortiphyd/GRFICSv3)
+- Further reading: `docs/ics_detection_engine_design.md` (architecture diagrams, DC coverage tables, limitations).

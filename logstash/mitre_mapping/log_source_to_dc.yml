@@ -284,3 +284,13 @@ snmp:trap: DC0021
 sysdig:file: DC0061
 vpxd.log: DC0064,DC0078
 wineventlog:dhcp: DC0078
+ics:openplc_debug: DC0109,DC0038
+ics:ulogd: DC0078,DC0082
+linux:nginx_error: DC0085
+linux:sim_supervisord: DC0033,DC0060
+linux:ews_supervisord: DC0060
+linux:ews_desktop: DC0067,DC0038
+linux:router_supervisord: DC0060
+NSM:SuricataEngine: DC0078
+NSM:SuricataApp: DC0078,DC0085
+NSM:SuricataStdio: DC0078

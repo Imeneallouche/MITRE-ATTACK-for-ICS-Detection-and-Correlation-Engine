@@ -1,3 +1,8 @@
+"""Data models for the ICS Detection and Correlation Engine.
+
+All structured data flowing through the pipeline is defined here:
+events, matches, correlations, alerts, and technique mappings.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -39,6 +44,9 @@ class NormalizedEvent:
     log_message: str
     fields: Dict[str, Any]
     raw_source: Dict[str, Any]
+    is_ics_asset: bool = False
+    asset_role: str = ""
+    categories: List[str] = field(default_factory=list)
     mitre_dc_candidates: List[str] = field(default_factory=list)
     mitre_keyword_hits: Dict[str, List[str]] = field(default_factory=dict)
 
@@ -57,6 +65,23 @@ class CandidateMatch:
 
 
 @dataclass
+class TechniqueAttribution:
+    """Technique inferred from the knowledge graph for an alert."""
+    technique_id: str
+    technique_name: str
+    probability: float
+    tactics: List[str] = field(default_factory=list)
+    mitigations: List[Dict[str, str]] = field(default_factory=list)
+    groups: List[str] = field(default_factory=list)
+    software: List[str] = field(default_factory=list)
+    targeted_assets: List[str] = field(default_factory=list)
+    detection_strategy: str = ""
+    analytics_used: List[str] = field(default_factory=list)
+    graph_path: str = ""
+    reasoning: str = ""
+
+
+@dataclass
 class CorrelationGroup:
     group_id: str
     asset_id: str
@@ -67,6 +92,7 @@ class CorrelationGroup:
     chain_ids: List[str] = field(default_factory=list)
     chain_depth: int = 1
     aggregate_score: float = 0.0
+    technique_sequence: List[str] = field(default_factory=list)
 
     def add_match(self, match: CandidateMatch) -> None:
         self.matches.append(match)
@@ -76,17 +102,38 @@ class CorrelationGroup:
 
 @dataclass
 class DetectionAlert:
+    detection_id: str
+    timestamp: str
     datacomponent: str
     datacomponent_id: Optional[str]
     asset_id: Optional[str]
     asset_name: Optional[str]
+    asset_ip: Optional[str]
+    zone: Optional[str]
+    is_ics_asset: bool
     es_index: str
     document_id: str
-    timestamp: str
-    matched_fields: Dict[str, Any]
-    similarity_score: float
-    evidence_snippet: str
     log_message: str
-    rule_or_pattern: str
-    detection_id: str
+    evidence_snippet: str
+
+    similarity_score: float
+    confidence_tier: str
+    signal_scores: Dict[str, float]
+    matched_fields: Dict[str, Any]
+    matched_keywords: List[str]
+    matched_categories: List[str]
+    matched_log_source: str
+    matched_channel: str
+
+    technique: Optional[TechniqueAttribution]
+    alternative_techniques: List[TechniqueAttribution]
+
+    correlation_group_id: str
+    chain_ids: List[str]
+    chain_depth: int
+    correlation_boost: float
+    chain_boost: float
+    event_count_in_group: int
+    technique_sequence: List[str]
+
     detection_metadata: Dict[str, Any]

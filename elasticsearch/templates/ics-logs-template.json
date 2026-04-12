@@ -1,5 +1,5 @@
 {
-  "index_patterns": ["ics-suricata-*", "ics-audit-*", "ics-auth-*", "ics-process-*", "ics-hmi-*", "ics-syslog-*", "ics-netfilter-*", "ics-docker-*"],
+  "index_patterns": ["ics-suricata-*", "ics-audit-*", "ics-auth-*", "ics-process-*", "ics-hmi-*", "ics-syslog-*", "ics-netfilter-*", "ics-docker-*", "ics-nginx-*", "ics-ews-*", "ics-router-*"],
   "priority": 500,
   "template": {
     "settings": {

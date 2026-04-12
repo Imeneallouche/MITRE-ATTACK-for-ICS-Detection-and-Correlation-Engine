@@ -11,6 +11,7 @@ dirs=(
   "$BASE/simulation"
   "$BASE/simulation/process_alarms"
   "$BASE/simulation/supervisor"
+  "$BASE/simulation/nginx"
 
   # plc
   "$BASE/plc"
@@ -31,6 +32,7 @@ dirs=(
   "$BASE/router"
   "$BASE/router/netfilter"
   "$BASE/router/flask"
+  "$BASE/router/supervisor"
 )
 
 for d in "${dirs[@]}"; do
@@ -48,6 +50,7 @@ files=(
   "$BASE/plc/syslog"
   "$BASE/plc/daemon.log"
   "$BASE/plc/kern.log"
+  "$BASE/plc/openplc_debug.log"
 
   "$BASE/ews/auth.log"
   "$BASE/ews/syslog"
@@ -56,6 +59,16 @@ files=(
   "$BASE/ews/wtmp"
   "$BASE/ews/pacct"
   "$BASE/ews/cron.log"
+  "$BASE/ews/supervisord.log"
+  "$BASE/ews/xvfb.log"
+  "$BASE/ews/xvfb.err"
+  "$BASE/ews/xfce.log"
+  "$BASE/ews/xfce.err"
+  "$BASE/ews/x11vnc.log"
+  "$BASE/ews/x11vnc.out"
+  "$BASE/ews/x11vnc.err"
+  "$BASE/ews/novnc.out"
+  "$BASE/ews/novnc.err"
 
   "$BASE/hmi/auth.log"
   "$BASE/hmi/syslog"
@@ -63,6 +76,11 @@ files=(
   "$BASE/hmi/kern.log"
 
   "$BASE/router/syslog"
+  "$BASE/simulation/nginx/access.log"
+  "$BASE/simulation/nginx/error.log"
+  "$BASE/simulation/supervisor/supervisord.log"
+  "$BASE/router/netfilter/ulogd.log"
+  "$BASE/router/supervisor/supervisord.log"
 )
 
 for f in "${files[@]}"; do

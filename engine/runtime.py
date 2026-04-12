@@ -1,3 +1,10 @@
+"""Main runtime for the ICS Detection and Correlation Engine.
+
+Supports three execution modes:
+- stream:   continuous near-real-time polling of Elasticsearch
+- oneshot:  single poll cycle (useful for cron or testing)
+- backtest: process a historical time range with PIT pagination
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +14,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .alerting import AlertBuilder, alert_to_document
 from .config import EngineConfig, load_config
@@ -16,8 +23,9 @@ from .dc_loader import load_assets, load_datacomponents
 from .es_client import Checkpoint, CheckpointStore, ESClient
 from .feature_extractor import to_normalized_event
 from .matcher import DataComponentMatcher
+from .neo4j_client import Neo4jClient
+from .technique_mapper import TechniqueMapper
 from .templates import alert_index_template, correlation_index_template
-
 
 LOG = logging.getLogger("ics-detector")
 
@@ -33,23 +41,49 @@ class DedupCache:
     def add(self, key: str, ts: datetime) -> None:
         self._data[key] = ts
         if len(self._data) > self.max_size:
-            # Delete oldest entries.
-            for old_key in sorted(self._data.keys(), key=lambda k: self._data[k])[: self.max_size // 10]:
-                del self._data[old_key]
+            for old in sorted(self._data, key=lambda k: self._data[k])[: self.max_size // 10]:
+                del self._data[old]
+
+
+def _build_fallback_map() -> Dict[str, List[Dict[str, str]]]:
+    """Hardcoded DC → technique fallback for when Neo4j is unavailable.
+
+    Derived from the Caldera attack chains and GRFICS context.
+    """
+    return {
+        "DC0078": [{"technique_id": "T0846", "technique_name": "Remote System Discovery", "probability": "0.6", "tactics": ["Discovery"]}],
+        "DC0082": [{"technique_id": "T0846", "technique_name": "Remote System Discovery", "probability": "0.5", "tactics": ["Discovery"]}],
+        "DC0085": [{"technique_id": "T0861", "technique_name": "Point & Tag Identification", "probability": "0.5", "tactics": ["Collection"]}],
+        "DC0067": [{"technique_id": "T0812", "technique_name": "Default Credentials", "probability": "0.6", "tactics": ["Lateral Movement", "Initial Access"]}],
+        "DC0038": [{"technique_id": "T0871", "technique_name": "Execution through API", "probability": "0.5", "tactics": ["Execution"]}],
+        "DC0109": [{"technique_id": "T0831", "technique_name": "Manipulation of Control", "probability": "0.5", "tactics": ["Impair Process Control"]}],
+        "DC0108": [{"technique_id": "T0816", "technique_name": "Device Restart/Shutdown", "probability": "0.4", "tactics": ["Inhibit Response Function"]}],
+        "DC0107": [{"technique_id": "T0801", "technique_name": "Monitor Process State", "probability": "0.5", "tactics": ["Collection"]}],
+        "DC0032": [{"technique_id": "T0807", "technique_name": "Command-Line Interface", "probability": "0.4", "tactics": ["Execution"]}],
+        "DC0064": [{"technique_id": "T0807", "technique_name": "Command-Line Interface", "probability": "0.5", "tactics": ["Execution"]}],
+        "DC0061": [{"technique_id": "T0889", "technique_name": "Modify Program", "probability": "0.4", "tactics": ["Impair Process Control", "Persistence"]}],
+        "DC0039": [{"technique_id": "T0889", "technique_name": "Modify Program", "probability": "0.3", "tactics": ["Persistence"]}],
+        "DC0004": [{"technique_id": "T0839", "technique_name": "Module Firmware", "probability": "0.5", "tactics": ["Persistence", "Inhibit Response Function"]}],
+    }
 
 
 class DetectionRuntime:
     def __init__(self, config: EngineConfig) -> None:
         self.config = config
-        self.es = ESClient(config.es_hosts, timeout_seconds=int(config.raw["elasticsearch"]["timeout_seconds"]))
+        self.es = ESClient(
+            config.es_hosts,
+            timeout_seconds=int(config.raw["elasticsearch"]["timeout_seconds"]),
+        )
         self.profiles = load_datacomponents(config.datacomponents_dir)
         self.assets_by_id, self.assets_by_ip = load_assets(config.assets_file)
+
         self.matcher = DataComponentMatcher(
             profiles=self.profiles,
             scoring_weights=config.scoring_weights,
             candidate_threshold=config.candidate_threshold,
             high_confidence_threshold=config.high_confidence_threshold,
         )
+
         corr_cfg = CorrelationConfig(
             window_seconds=int(config.correlation["window_seconds"]),
             repeat_count_escalation=int(config.correlation["repeat_count_escalation"]),
@@ -58,9 +92,29 @@ class DetectionRuntime:
             chain_step_boost=float(config.correlation["chain_step_boost"]),
         )
         self.correlation = CorrelationEngine(cfg=corr_cfg)
-        self.alert_builder = AlertBuilder(
-            suppress_window_seconds=int(config.raw["engine"]["suppress_window_seconds"])
+
+        self.neo4j = Neo4jClient(
+            uri=config.neo4j_uri,
+            username=config.neo4j_username,
+            password=config.neo4j_password,
+            enabled=config.neo4j_enabled,
+            cache_ttl_seconds=config.neo4j_cache_ttl,
         )
+
+        tm_cfg = config.technique_mapper
+        self.technique_mapper = TechniqueMapper(
+            neo4j=self.neo4j,
+            alpha_group=float(tm_cfg.get("alpha_group", 0.3)),
+            alpha_asset=float(tm_cfg.get("alpha_asset", 0.5)),
+            max_candidates=int(tm_cfg.get("max_candidates", 5)),
+            fallback_map=_build_fallback_map(),
+        )
+
+        self.alert_builder = AlertBuilder(
+            technique_mapper=self.technique_mapper,
+            suppress_window_seconds=int(config.raw["engine"]["suppress_window_seconds"]),
+        )
+
         self.checkpoints = CheckpointStore(config.checkpoint_file)
         self.dedup = DedupCache(max_size=int(config.raw["engine"]["dedup_cache_size"]))
 
@@ -68,41 +122,48 @@ class DetectionRuntime:
         self.es.ensure_index_template("ics-alerts-template", alert_index_template())
         self.es.ensure_index_template("ics-correlations-template", correlation_index_template())
 
+    def warm_graph_cache(self) -> None:
+        self.neo4j.warm_cache()
+
     def process_hits(self, hits: List[Dict[str, Any]], threshold: Optional[float] = None) -> int:
         alert_count = 0
         threshold = self.config.alert_threshold if threshold is None else threshold
+
         for hit in hits:
             source = hit.get("_source", {})
             dedup_key = self._dedup_key(hit)
             event_ts = _safe_datetime(source.get("@timestamp"))
+
             if self.dedup.seen(dedup_key):
                 continue
             self.dedup.add(dedup_key, event_ts)
 
             event = to_normalized_event(hit, asset_by_ip=self.assets_by_ip)
+
             if event.asset_id in {"kali", "caldera"}:
                 continue
 
             matches = self.matcher.match_event(event)
             if not matches:
                 continue
+
             top_match = matches[0]
 
-            # Unknown asset penalty.
-            penalized_score = top_match.similarity_score
+            penalized = top_match.similarity_score
             if event.asset_id.startswith("unknown"):
-                penalized_score = max(0.0, penalized_score - self.config.unknown_asset_penalty)
-                top_match.similarity_score = penalized_score
+                penalized = max(0.0, penalized - self.config.unknown_asset_penalty)
+                top_match.similarity_score = penalized
 
             if top_match.similarity_score < threshold:
                 continue
 
             group, boosts = self.correlation.process(top_match)
+
             alert = self.alert_builder.build_alert(
                 match=top_match,
                 group=group,
                 boosts=boosts,
-                strategy="multi_signal_weighted+correlation",
+                strategy="multi_signal_weighted+correlation+knowledge_graph",
                 threshold=threshold,
                 sources_used=[event.log_source_normalized, f"dc:{top_match.datacomponent_id}"],
                 related_matches=matches[1:4],
@@ -112,22 +173,14 @@ class DetectionRuntime:
 
             alert_index = self.es.resolve_index_name(self.config.es_alert_index_pattern, event.timestamp)
             corr_index = self.es.resolve_index_name(self.config.es_correlation_index_pattern, event.timestamp)
+
             self.es.index_document(alert_index, alert_to_document(alert), doc_id=alert.detection_id)
             self.es.index_document(
                 corr_index,
-                {
-                    "group_id": group.group_id,
-                    "asset_id": group.asset_id,
-                    "asset_name": group.asset_name,
-                    "first_timestamp": group.first_timestamp.isoformat(),
-                    "last_timestamp": group.last_timestamp.isoformat(),
-                    "chain_ids": group.chain_ids,
-                    "chain_depth": group.chain_depth,
-                    "aggregate_score": round(group.aggregate_score, 4),
-                    "event_count": len(group.matches),
-                },
+                self.correlation.get_group_summary(group.group_id) or {},
             )
             alert_count += 1
+
         return alert_count
 
     def run_stream(self) -> None:
@@ -156,15 +209,13 @@ class DetectionRuntime:
         search_after = None
         try:
             while True:
-                body = {
+                body: Dict[str, Any] = {
                     "size": self.config.batch_size,
                     "sort": [{"@timestamp": "asc"}, {"_id": "asc"}],
                     "pit": {"id": pit, "keep_alive": "2m"},
                     "query": {
                         "bool": {
-                            "must": [
-                                {"range": {"@timestamp": {"gte": start, "lt": end}}},
-                            ],
+                            "must": [{"range": {"@timestamp": {"gte": start, "lt": end}}}],
                             "must_not": [{"terms": {"asset_id": ["kali", "caldera"]}}],
                         }
                     },
@@ -213,15 +264,16 @@ class DetectionRuntime:
 
     def _dedup_key(self, hit: Dict[str, Any]) -> str:
         src = hit.get("_source", {})
-        raw = "|".join(
-            [
-                str(src.get("asset_id", "")),
-                str(src.get("log_source_normalized", "")),
-                str(src.get("@timestamp", ""))[:19],
-                str(src.get("log_message", src.get("message", ""))),
-            ]
-        )
+        raw = "|".join([
+            str(src.get("asset_id", "")),
+            str(src.get("log_source_normalized", "")),
+            str(src.get("@timestamp", ""))[:19],
+            str(src.get("log_message", src.get("message", ""))),
+        ])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def shutdown(self) -> None:
+        self.neo4j.close()
 
 
 def _safe_datetime(value: Any) -> datetime:
@@ -234,42 +286,55 @@ def _safe_datetime(value: Any) -> datetime:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ICS DataComponent Detection and Correlation Engine")
-    parser.add_argument("--config", default="config/detection.yml", help="Path to detection config file")
+    parser = argparse.ArgumentParser(
+        description="ICS DataComponent Detection and Correlation Engine"
+    )
+    parser.add_argument("--config", default="config/detection.yml", help="Config file path")
     parser.add_argument(
-        "--mode",
-        choices=["stream", "oneshot", "backtest"],
-        default="stream",
+        "--mode", choices=["stream", "oneshot", "backtest"], default="stream",
         help="Engine execution mode",
     )
     parser.add_argument("--start", help="Backtest start timestamp (ISO8601)")
     parser.add_argument("--end", help="Backtest end timestamp (ISO8601)")
-    parser.add_argument("--bootstrap-templates", action="store_true", help="Install ES index templates on startup")
+    parser.add_argument("--bootstrap-templates", action="store_true", help="Install ES index templates")
+    parser.add_argument("--no-graph", action="store_true", help="Disable Neo4j integration")
     return parser
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     args = build_arg_parser().parse_args()
     cfg = load_config(Path(args.config))
+
+    if args.no_graph:
+        cfg.raw.setdefault("neo4j", {})["enabled"] = False
+
     runtime = DetectionRuntime(cfg)
 
     if args.bootstrap_templates:
         runtime.bootstrap_templates()
 
-    if args.mode == "stream":
-        runtime.run_stream()
-        return 0
-    if args.mode == "oneshot":
-        alerts = runtime.run_oneshot()
-        LOG.info("Oneshot complete; emitted %s alerts.", alerts)
-        return 0
-    if args.mode == "backtest":
-        if not args.start or not args.end:
-            raise SystemExit("--start and --end are required in backtest mode")
-        alerts = runtime.run_backtest(args.start, args.end)
-        LOG.info("Backtest complete; emitted %s alerts.", alerts)
-        return 0
+    runtime.warm_graph_cache()
+
+    try:
+        if args.mode == "stream":
+            runtime.run_stream()
+            return 0
+        if args.mode == "oneshot":
+            alerts = runtime.run_oneshot()
+            LOG.info("Oneshot complete; emitted %s alerts.", alerts)
+            return 0
+        if args.mode == "backtest":
+            if not args.start or not args.end:
+                raise SystemExit("--start and --end are required in backtest mode")
+            alerts = runtime.run_backtest(args.start, args.end)
+            LOG.info("Backtest complete; emitted %s alerts.", alerts)
+            return 0
+    finally:
+        runtime.shutdown()
     return 0
 
 

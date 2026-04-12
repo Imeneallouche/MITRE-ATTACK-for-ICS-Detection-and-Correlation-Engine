@@ -32,6 +32,8 @@ services:
       - ./shared_logs/simulation/process_alarms:/var/log/grfics/alarms
       # EXPORT: Supervisor logs for Modbus I/O + TE sim (DC0109/DC0107/DC0038)
       - ./shared_logs/simulation/supervisor:/var/log/supervisor
+      # EXPORT: nginx + php-fpm web UI (DC0085)
+      - ./shared_logs/simulation/nginx:/var/log/nginx
     networks:
       a-grfics-admin: {}
       b-ics-net:
@@ -56,6 +58,8 @@ services:
       - ./shared_logs/plc/audit:/var/log/audit
       # EXPORT: PLC-specific application logs for DC0109 (Process Alarm)
       - ./shared_logs/plc/plc_app:/var/log/plc
+      # EXPORT: OpenPLC webserver debug (same path as webserver.py)
+      - ./shared_logs/plc/openplc_debug.log:/tmp/openplc_debug.log
       # EXPORT: Kernel log for DC0016 (Module Load)
       - ./shared_logs/plc/kern.log:/var/log/kern.log
     networks:
@@ -87,6 +91,17 @@ services:
       - ./shared_logs/ews/pacct:/var/log/pacct
       # EXPORT: Cron for persistence monitoring
       - ./shared_logs/ews/cron.log:/var/log/cron.log
+      # EXPORT: Engineering desktop / VNC / noVNC (DC0067/DC0038)
+      - ./shared_logs/ews/supervisord.log:/var/log/supervisord.log
+      - ./shared_logs/ews/xvfb.log:/var/log/xvfb.log
+      - ./shared_logs/ews/xvfb.err:/var/log/xvfb.err
+      - ./shared_logs/ews/xfce.log:/var/log/xfce.log
+      - ./shared_logs/ews/xfce.err:/var/log/xfce.err
+      - ./shared_logs/ews/x11vnc.log:/var/log/x11vnc.log
+      - ./shared_logs/ews/x11vnc.out:/var/log/x11vnc.out
+      - ./shared_logs/ews/x11vnc.err:/var/log/x11vnc.err
+      - ./shared_logs/ews/novnc.out:/var/log/novnc.out
+      - ./shared_logs/ews/novnc.err:/var/log/novnc.err
     networks:
       a-grfics-admin: {}
       b-ics-net:
@@ -158,6 +173,8 @@ services:
       - ./shared_logs/router:/var/log/suricata
       # EXPORT: Router syslog for DC0016 (firmware/module), DC0004 (firmware mod)
       - ./shared_logs/router/syslog:/var/log/syslog
+      # EXPORT: Suricata supervisor (engine / stdout/stderr)
+      - ./shared_logs/router/supervisor:/var/log/supervisor
       # EXPORT: ulogd netfilter JSON firewall logs for DC0078/DC0082 (Network Traffic)
       - ./shared_logs/router/netfilter:/var/log/ulog
       # EXPORT: Flask firewall-UI logs for DC0038/DC0061 (App Log / Config Change)
