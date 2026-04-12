@@ -2,114 +2,141 @@
 
 ## 1. Architecture Overview
 
-```
+```mermaid
 flowchart TB
-  %% =========================
-  %% GRFICS ICS/OT Environment
-  %% =========================
-  subgraph ENV["GRFICS ICS/OT Environment"]
-    direction TB
+    %% =========================
+    %% GRFICS ICS/OT Environment
+    %% =========================
+    subgraph ENV["GRFICS ICS/OT Environment"]
+        direction LR
 
-    subgraph ASSETS["Assets"]
-      direction LR
-      simulation["simulation"]
-      plc["plc"]
-      ews["ews"]
-      hmi["hmi"]
-      router["router"]
-      kali["kali"]
+        SIM["simulation"]
+        PLC["plc"]
+        EWS["ews"]
+        HMI["hmi"]
+        ROUTER["router"]
+        KALI["kali"]
+
+        subgraph LOGS["shared_logs/  (volume mounts)"]
+            direction TB
+            LOG1["syslog"]
+            LOG2["auth.log"]
+            LOG3["kern.log"]
+            LOG4["audit logs"]
+            LOG5["process alarms"]
+            LOG6["Suricata EVE"]
+            LOG7["netfilter JSON"]
+            LOG8["Modbus I/O"]
+            LOG9["Flask logs"]
+            LOG10["other ICS / OT logs"]
+        end
+
+        SIM --> LOGS
+        PLC --> LOGS
+        EWS --> LOGS
+        HMI --> LOGS
+        ROUTER --> LOGS
+        KALI --> LOGS
     end
 
-    shared_logs["shared_logs/ (volume mounts)<br/>• syslog<br/>• auth.log<br/>• kern.log<br/>• audit<br/>• process_alarms<br/>• Suricata EVE<br/>• netfilter JSON<br/>• Modbus I/O<br/>• Flask"]
+    %% =========================
+    %% Collection Layer
+    %% =========================
+    FILEBEAT["Filebeat<br/>Collects 20+ log types<br/>from 5 assets"]
+    LOGS --> FILEBEAT
 
-    simulation --> shared_logs
-    plc --> shared_logs
-    ews --> shared_logs
-    hmi --> shared_logs
-    router --> shared_logs
-    kali --> shared_logs
-  end
+    %% =========================
+    %% Processing Layer
+    %% =========================
+    subgraph LS["Logstash"]
+        direction TB
+        LS_IN["01-input"]
+        LS_COMMON["10-common"]
+        LS_AUTH["11-auth"]
+        LS_SYSLOG["12-syslog"]
+        LS_AUDIT["13-audit"]
+        LS_ICS["14-ics"]
+        LS_ENRICH["20-enrich-mitre"]
+        LS_OUT["30-output"]
 
-  filebeat["Filebeat<br/>Collects 20+ log types from 5 assets"]
-  logstash["Logstash<br/><br/>8 pipeline stages:<br/>01-input → 10-common → 11-auth → 12-syslog → 13-audit → 14-ics → 20-enrich-mitre → 30-output<br/><br/>Key output:<br/>• log_source_normalized<br/>• mitre_dc_candidates[]<br/>• mitre_keyword_hits{}"]
-  elasticsearch["Elasticsearch<br/>Indices:<br/>• ics-syslog-*<br/>• ics-auth-*<br/>• ics-suricata-*<br/>• ics-netfilter-*<br/>• etc."]
+        LS_FLOW["8 pipeline stages"]
 
-  kibana["Kibana Dashboard"]
+        LS_IN --> LS_COMMON --> LS_AUTH --> LS_SYSLOG --> LS_AUDIT --> LS_ICS --> LS_ENRICH --> LS_OUT
+        LS_FLOW --- LS_IN
 
-  subgraph DET["Detection & Correlation Layer"]
-    direction TB
-    engine["Detection Engine (Python)<br/><br/>Modules:<br/>• runtime<br/>• matcher<br/>• scorer<br/>• correlator<br/>• alerting<br/>• neo4j_cli<br/>• tech_map<br/><br/>Outputs:<br/>• ics-alerts-*<br/>• ics-corr-*"]
-    neo4j["Neo4j Knowledge Graph (v18)"]
-  end
+        LS_KEYS["Key output fields:<br/>• log_source_normalized<br/>• mitre_dc_candidates[]<br/>• mitre_keyword_hits{}"]
+    end
 
-  shared_logs --> filebeat
-  filebeat -->|Beats protocol<br/>5044| logstash
-  logstash --> elasticsearch
+    FILEBEAT -->|Logstash Beats 5044| LS_IN
+    LS_ENRICH --> LS_KEYS
 
-  elasticsearch --> kibana
-  elasticsearch --> engine
-  engine -->|writes alerts & correlations| elasticsearch
+    %% =========================
+    %% Storage Layer
+    %% =========================
+    ES["Elasticsearch"]
+    LS_OUT --> ES
 
-  engine <-->|Graph queries:<br/>DC → Analytic → DS → Technique<br/>Technique → Mitigations<br/>Technique → Groups<br/>Technique → Assets| neo4j
-  
-```
+    ES_INDICES["Indices:<br/>ics-syslog-*<br/>ics-auth-*<br/>ics-suricata-*<br/>ics-netfilter-*<br/>and other normalized indices"]
+    ES --> ES_INDICES
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      GRFICS ICS/OT Environment                       │
-│  ┌──────────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌────────┐ ┌──────┐         │
-│  │simulation│ │ plc │ │ ews │ │ hmi │ │ router │ │ kali │         │
-│  └─────┬────┘ └──┬──┘ └──┬──┘ └──┬──┘ └───┬────┘ └──┬───┘         │
-│        │         │       │       │         │         │              │
-│        ▼         ▼       ▼       ▼         ▼         ▼              │
-│  ┌─────────────────────────────────────────────────────┐            │
-│  │              shared_logs/ (volume mounts)            │            │
-│  │   syslog, auth.log, kern.log, audit, process_alarms │            │
-│  │   Suricata EVE, netfilter JSON, Modbus I/O, Flask   │            │
-│  └───────────────────────┬─────────────────────────────┘            │
-└──────────────────────────┼──────────────────────────────────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Filebeat   │  Collects 20+ log types from 5 assets
-                    └──────┬──────┘
-                           │ Logstash Beats (5044)
-                    ┌──────▼──────┐
-                    │   Logstash   │  8 pipeline stages:
-                    │              │  01-input → 10-common → 11-auth →
-                    │              │  12-syslog → 13-audit → 14-ics →
-                    │              │  20-enrich-mitre → 30-output
-                    │              │
-                    │  Key output: │  log_source_normalized
-                    │              │  mitre_dc_candidates[]
-                    │              │  mitre_keyword_hits{}
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │Elasticsearch│  Indices: ics-syslog-*, ics-auth-*,
-                    │             │  ics-suricata-*, ics-netfilter-*, etc.
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
-  │   Kibana     │  │  Detection   │  │   Neo4j     │
-  │  Dashboard   │  │   Engine     │  │ Knowledge   │
-  │              │  │              │  │   Graph     │
-  └──────────────┘  │  (Python)    │  │  (v18)     │
-                    │              │  └──────┬──────┘
-                    │  Modules:    │         │
-                    │  ├ runtime   │◄────────┘
-                    │  ├ matcher   │  Graph queries:
-                    │  ├ scorer    │  DC→Analytic→DS→Technique
-                    │  ├ correlator│  Technique→Mitigations
-                    │  ├ alerting  │  Technique→Groups
-                    │  ├ neo4j_cli │  Technique→Assets
-                    │  └ tech_map  │
-                    │              │
-                    │  Output:     │
-                    │  ics-alerts-*│
-                    │  ics-corr-*  │
-                    └──────────────┘
+    %% =========================
+    %% Consumers / Analytics
+    %% =========================
+    KIBANA["Kibana Dashboard"]
+    DETECTION["Detection Engine<br/>(Python)"]
+    NEO4J["Neo4j Knowledge Graph<br/>(MITRE ATT&CK for ICS v18)"]
+
+    ES --> KIBANA
+    ES --> DETECTION
+    ES --> NEO4J
+
+    %% =========================
+    %% Detection Engine Internals
+    %% =========================
+    subgraph DE["Detection Engine Modules"]
+        direction TB
+        DE_RUNTIME["runtime"]
+        DE_MATCHER["matcher"]
+        DE_SCORER["scorer"]
+        DE_CORR["correlator"]
+        DE_ALERT["alerting"]
+        DE_NEO4J["neo4j_cli"]
+        DE_MAP["tech_map"]
+
+        DE_RUNTIME --> DE_MATCHER --> DE_SCORER --> DE_CORR --> DE_ALERT
+        DE_MATCHER --> DE_NEO4J --> DE_MAP
+    end
+
+    DETECTION --> DE_RUNTIME
+
+    DE_OUT1["Output index:<br/>ics-alerts-*"]
+    DE_OUT2["Output index:<br/>ics-corr-*"]
+    DETECTION --> DE_OUT1
+    DETECTION --> DE_OUT2
+
+    %% =========================
+    %% Knowledge Graph Relations
+    %% =========================
+    GRAPH_Q["Graph queries:<br/>DC → Analytic → DS → Technique<br/>Technique → Mitigations<br/>Technique → Groups<br/>Technique → Assets"]
+    DETECTION <--> NEO4J
+    NEO4J --> GRAPH_Q
+
+    %% =========================
+    %% Styling
+    %% =========================
+    classDef env fill:#eef7ff,stroke:#4a90e2,stroke-width:1.5px,color:#111;
+    classDef log fill:#f7f7f7,stroke:#999,stroke-width:1px,color:#111;
+    classDef process fill:#fff4e6,stroke:#f0a500,stroke-width:1.5px,color:#111;
+    classDef storage fill:#eefbee,stroke:#2e8b57,stroke-width:1.5px,color:#111;
+    classDef analytics fill:#f3ecff,stroke:#7b61ff,stroke-width:1.5px,color:#111;
+    classDef output fill:#ffecec,stroke:#d64545,stroke-width:1.5px,color:#111;
+
+    class SIM,PLC,EWS,HMI,ROUTER,KALI env;
+    class LOGS,LOG1,LOG2,LOG3,LOG4,LOG5,LOG6,LOG7,LOG8,LOG9,LOG10 log;
+    class FILEBEAT,LS,LS_IN,LS_COMMON,LS_AUTH,LS_SYSLOG,LS_AUDIT,LS_ICS,LS_ENRICH,LS_OUT process;
+    class ES,ES_INDICES storage;
+    class KIBANA,DETECTION,NEO4J,DE_RUNTIME,DE_MATCHER,DE_SCORER,DE_CORR,DE_ALERT,DE_NEO4J,DE_MAP,GRAPH_Q analytics;
+    class DE_OUT1,DE_OUT2,LS_KEYS output;
 ```
 
 ### Data Flow
