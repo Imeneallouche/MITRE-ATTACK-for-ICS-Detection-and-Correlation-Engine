@@ -1,0 +1,14 @@
+---
+
+id: cc00CCCC-aaaa-bbbb-cccc-00000000000C
+name: SSH Exfiltration then DMZ Modbus Impact
+description: |
+  SSH from Kali to EWS (engineer:plc123) with brute simulation, exfiltrates chemical.st to Kali,
+  then executes direct Modbus valve manipulation from the Kali agent (untrusted DMZ IP) for a
+  contrasting network and detection footprint versus trusted-EWS execution.
+atomic_ordering:
+- e5f6a7b8-5555-5555-5555-000000000002  # modbus_cli on Kali
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + login
+- a9b8c7d6-1010-1010-1010-000000000006  # SCP pull chemical.st to Kali
+- a1b2c3d4-1111-1111-1111-000000000004  # Modbus close purge (from Kali)
+- a1b2c3d4-1111-1111-1111-000000000005  # Modbus open feed 1 (from Kali)

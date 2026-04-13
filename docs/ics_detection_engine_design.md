@@ -15,6 +15,7 @@ flowchart TB
         EWS["ews"]
         HMI["hmi"]
         ROUTER["router"]
+        KALI["kali"]
 
         subgraph LOGS["shared_logs/  (volume mounts)"]
             direction TB
@@ -35,6 +36,7 @@ flowchart TB
         EWS --> LOGS
         HMI --> LOGS
         ROUTER --> LOGS
+        KALI --> LOGS
     end
 
     %% =========================
@@ -129,7 +131,7 @@ flowchart TB
     classDef analytics fill:#f3ecff,stroke:#7b61ff,stroke-width:1.5px,color:#111;
     classDef output fill:#ffecec,stroke:#d64545,stroke-width:1.5px,color:#111;
 
-    class SIM,PLC,EWS,HMI,ROUTER env;
+    class SIM,PLC,EWS,HMI,ROUTER,KALI env;
     class LOGS,LOG1,LOG2,LOG3,LOG4,LOG5,LOG6,LOG7,LOG8,LOG9,LOG10 log;
     class FILEBEAT,LS,LS_IN,LS_COMMON,LS_AUTH,LS_SYSLOG,LS_AUDIT,LS_ICS,LS_ENRICH,LS_OUT process;
     class ES,ES_INDICES storage;

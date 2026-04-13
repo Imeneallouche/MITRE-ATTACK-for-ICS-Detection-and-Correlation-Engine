@@ -3,8 +3,8 @@
 - id: c9d0e1f2-9999-9999-9999-000000000003
   name: OpenPLC - Download Active Program
   description: |
-    Download the active program via the programs page.
-    The /get-program-body endpoint may not exist; use /programs page parsing.
+    Stock OpenPLC does not expose a simple GET for raw .st bodies. This step collects
+    the authenticated /programs HTML for program names (same as b2c3d4e5 collection).
   tactic: collection
   technique_id: T0845
   technique_name: Program Upload
@@ -16,11 +16,7 @@
       "http://192.168.95.2:8080/programs"
       -o /tmp/programs_page.html &&
       echo "=== Programs Found ===" &&
-      grep -oP '[0-9]+\.st' /tmp/programs_page.html | sort -u &&
-      echo "=== Attempting direct download ===" &&
-      curl -s -b /tmp/plc_cookies.txt
-      "http://192.168.95.2:8080/programs"
-      -o /tmp/plc_programs.html &&
-      wc -l /tmp/plc_programs.html &&
+      grep -oE '[0-9]+\.st' /tmp/programs_page.html | sort -u &&
+      wc -l /tmp/programs_page.html &&
       echo "PROGRAM_ENUMERATED"
     timeout: 60

