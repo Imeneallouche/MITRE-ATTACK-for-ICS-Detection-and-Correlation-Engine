@@ -8,6 +8,7 @@ VOLUME_NAME="mitre-attack-for-ics-detection-and-correlation-engine_elasticsearch
 SHARED_LOGS_DIR="$SCRIPT_DIR/shared_logs"
 INIT_SCRIPT="$SCRIPT_DIR/init_shared_logs.sh"
 SSH_SETUP_SCRIPT="$SCRIPT_DIR/setup_ssh_rsyslog.sh"
+ENGINE_CHECKPOINT_FILE="$SCRIPT_DIR/state/engine_checkpoint.json"
 
 log() {
   echo "=== $1 ==="
@@ -47,6 +48,10 @@ if [[ -d "$SHARED_LOGS_DIR" ]]; then
 else
   log "Directory not found, skipping: shared_logs"
 fi
+
+log "Resetting engine checkpoint"
+mkdir -p "$(dirname "$ENGINE_CHECKPOINT_FILE")"
+printf '{}\n' > "$ENGINE_CHECKPOINT_FILE"
 
 log "Re-initializing shared logs"
 run_script "$INIT_SCRIPT"

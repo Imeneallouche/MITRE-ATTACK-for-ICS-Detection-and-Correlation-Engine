@@ -15,8 +15,12 @@ For each technique *t* reachable from a DataComponent *dc* in the graph:
 where:
 - path_weight: number of distinct Analytic nodes linking dc to t
 - group_usage: number of threat groups known to use t  (normalised)
-- asset_relevance: 1 if the targeted MITRE Asset matches the GRFICS
-  asset role (PLC ↔ PLC, EWS ↔ Engineering Workstation, etc.), else 0.
+- asset_relevance: 1 when the targeted MITRE Asset matches the
+  configured asset-role mapping for the event's asset role, else 0.
+
+The mapping of generic asset roles to MITRE ATT&CK Asset names is
+supplied via configuration; this module ships no environment-specific
+rules.
 """
 from __future__ import annotations
 
@@ -27,14 +31,6 @@ from typing import Dict, List, Optional, Tuple
 from .neo4j_client import DCTechniqueMapping, MitigationInfo, Neo4jClient, TechniqueInfo
 
 LOG = logging.getLogger("ics-detector.technique")
-
-GRFICS_ASSET_ROLE_MAP: Dict[str, List[str]] = {
-    "plc": ["Programmable Logic Controller (PLC)", "Controller", "Field Controller/RTU/PLC/IED"],
-    "simulation": ["Field Controller/RTU/PLC/IED", "Control Server", "Safety Instrumented System/Protection Relay"],
-    "hmi": ["Human-Machine Interface", "Control Server", "SCADA Server"],
-    "ews": ["Engineering Workstation", "Control Server"],
-    "router": ["Control Server", "Engineering Workstation"],
-}
 
 
 @dataclass
@@ -78,12 +74,18 @@ class TechniqueMapper:
         alpha_asset: float = 0.5,
         max_candidates: int = 5,
         fallback_map: Optional[Dict[str, List[Dict[str, str]]]] = None,
+        asset_role_map: Optional[Dict[str, List[str]]] = None,
     ) -> None:
         self._neo4j = neo4j
         self._alpha_group = alpha_group
         self._alpha_asset = alpha_asset
         self._max_candidates = max_candidates
         self._fallback = fallback_map or {}
+        self._asset_role_map: Dict[str, List[str]] = {
+            str(k).lower(): list(v)
+            for k, v in (asset_role_map or {}).items()
+            if isinstance(v, list)
+        }
 
     def map_technique(
         self,
@@ -163,12 +165,12 @@ class TechniqueMapper:
         return info.group_count if info else 0
 
     def _asset_relevance(self, technique_id: str, asset_role: str) -> float:
-        if not asset_role:
+        if not asset_role or not self._asset_role_map:
             return 0.0
         targeted = self._neo4j.get_assets_for_technique(technique_id)
         if not targeted:
             return 0.0
-        role_assets = GRFICS_ASSET_ROLE_MAP.get(asset_role.lower(), [])
+        role_assets = self._asset_role_map.get(asset_role.lower(), [])
         for ra in role_assets:
             for ta in targeted:
                 if ra.lower() in ta.lower() or ta.lower() in ra.lower():

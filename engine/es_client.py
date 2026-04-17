@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ try:
     from elasticsearch import Elasticsearch
 except Exception:  # pragma: no cover - dependency may be absent before install
     Elasticsearch = None  # type: ignore
+
+LOG = logging.getLogger("ics-detector.es")
 
 
 @dataclass
@@ -59,19 +62,32 @@ class ESClient:
         return str(result["id"])
 
     def close_pit(self, pit_id: str) -> None:
-        self.client.close_point_in_time(body={"id": pit_id})
+        try:
+            self.client.close_point_in_time(body={"id": pit_id})
+        except Exception as exc:
+            LOG.debug("close_point_in_time ignored: %s", exc)
 
-    def poll_events(self, index_pattern: str, since_ts: str, batch_size: int, pit_id: Optional[str] = None, search_after: Optional[List[Any]] = None) -> Dict[str, Any]:
-        query = {
+    def poll_events(
+        self,
+        index_pattern: str,
+        since_ts: str,
+        batch_size: int,
+        pit_id: Optional[str] = None,
+        search_after: Optional[List[Any]] = None,
+        excluded_asset_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        bool_query: Dict[str, Any] = {
+            "must": [{"range": {"@timestamp": {"gt": since_ts}}}],
+        }
+        if excluded_asset_ids:
+            bool_query["must_not"] = [
+                {"terms": {"asset_id": sorted(set(excluded_asset_ids))}}
+            ]
+        query: Dict[str, Any] = {
             "size": batch_size,
             "sort": [{"@timestamp": "asc"}, {"_shard_doc": "asc"}],
-            "query": {
-                "bool": {
-                    "must": [{"range": {"@timestamp": {"gt": since_ts}}}],
-                    "must_not": [{"terms": {"asset_id": ["kali", "caldera"]}}],
-                }
-            },
-            }
+            "query": {"bool": bool_query},
+        }
 
         if pit_id:
             query["pit"] = {"id": pit_id, "keep_alive": "1m"}

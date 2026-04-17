@@ -31,6 +31,8 @@ def alert_index_template() -> dict:
                     "matched_categories": {"type": "keyword"},
                     "matched_log_source": {"type": "keyword"},
                     "matched_channel": {"type": "text"},
+                    "semantic_score": {"type": "float"},
+                    "gate_reason": {"type": "keyword"},
                     "technique": {
                         "type": "object",
                         "properties": {

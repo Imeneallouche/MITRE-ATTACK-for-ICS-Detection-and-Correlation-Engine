@@ -1,38 +1,31 @@
-"""Mathematically grounded scoring model for DataComponent matching.
+"""Hierarchical scoring model for DataComponent matching.
 
-Scoring Formula
-===============
-The composite similarity S(event, dc) is a weighted linear combination
-of five independent signals:
+Scoring Pipeline
+================
+Tier 1 -- Candidate Gate
+    A DC becomes a candidate if *either* gate fires:
+      - Log-source gate: ``log_source_normalized`` maps to the DC via the
+        Logstash enrichment or a normalised-name match.
+      - Semantic gate: ``cosine_sim(embed(log), embed(DC)) >= gate_threshold``
 
-    S = w_ls · S_ls  +  w_kw · S_kw  +  w_fld · S_fld
-      + w_cat · S_cat +  w_ch · S_ch
+Tier 2 -- Composite Score
+    For each candidate the composite similarity S(event, dc) is:
 
-Each signal is normalised to [0, 1]:
+        S = w_sem * S_sem + w_ls * S_ls + w_kw * S_kw
+          + w_fld * S_fld + w_cat * S_cat
 
-S_ls  – Log-source match (binary 0/1 from Logstash enrichment or name match)
-S_kw  – Keyword similarity:  |K_hit| / |K_profile|
-         where K_hit are matched keywords and K_profile is the DC keyword set.
-         Uses Aho-Corasick for O(n) multi-pattern matching when available.
-S_fld – Field overlap (Jaccard):  |F_event ∩ F_dc| / |F_event ∪ F_dc|
-S_cat – Category overlap (Jaccard):  |C_event ∩ C_dc| / |C_event ∪ C_dc|
-S_ch  – Channel fuzzy match (token-ratio)
+    Signals:
+      S_sem  -- Cosine similarity between log and DC embeddings [0, 1]
+      S_ls   -- Graduated log-source match (1.0 exact, 0.8 prefix, 0.5 family)
+      S_kw   -- Keyword overlap ratio with IDF weighting
+      S_fld  -- Field overlap (Jaccard)
+      S_cat  -- Category overlap (Jaccard)
 
 Confidence
 ==========
-After correlation, the final confidence is:
+    confidence = min(1, S * alpha_asset) + corr_boost + chain_boost
 
-    C = min(1, S · α_asset) + corr_boost + chain_boost
-
-α_asset = 1.0 if the asset is a known ICS asset, (1 − penalty) otherwise.
-
-IDF-Rarity Adjustment (optional)
-================================
-If DC document-frequency statistics are available:
-
-    S_kw_adj = S_kw × log(N / df(dc)) / log(N)
-
-This gives higher weight to keywords from rare DCs.
+    alpha_asset = 1.0 for known ICS assets, (1 - penalty) otherwise.
 """
 from __future__ import annotations
 
@@ -40,16 +33,12 @@ import math
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-try:
-    import ahocorasick
-    _HAS_AC = True
-except ImportError:
-    ahocorasick = None  # type: ignore
-    _HAS_AC = False
+import numpy as np
+
+from .embeddings import EmbeddingEngine
 
 
 def jaccard(set_a: Set[str], set_b: Set[str]) -> float:
-    """Jaccard similarity coefficient for two sets."""
     if not set_a and not set_b:
         return 0.0
     intersection = len(set_a & set_b)
@@ -58,14 +47,12 @@ def jaccard(set_a: Set[str], set_b: Set[str]) -> float:
 
 
 def overlap_ratio(hits: int, total: int) -> float:
-    """Simple overlap ratio clamped to [0, 1]."""
     if total <= 0:
         return 0.0
     return min(hits / total, 1.0)
 
 
 def idf_weight(doc_freq: int, total_docs: int) -> float:
-    """Inverse-document-frequency weight, normalised to [0, 1]."""
     if total_docs <= 0 or doc_freq <= 0:
         return 1.0
     return math.log(total_docs / doc_freq) / math.log(total_docs)
@@ -75,51 +62,37 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
-class AhoCorasickMatcher:
-    """Multi-pattern keyword matcher using Aho-Corasick automaton.
-
-    Falls back to sequential search if the ahocorasick library is absent.
-    """
-
-    def __init__(self, keywords: List[str]) -> None:
-        self._keywords = [_normalize_text(k) for k in keywords if k]
-        self._automaton = None
-        if _HAS_AC and self._keywords:
-            self._automaton = ahocorasick.Automaton()
-            for idx, kw in enumerate(self._keywords):
-                self._automaton.add_word(kw, (idx, kw))
-            self._automaton.make_automaton()
-
-    def search(self, text: str) -> List[str]:
-        text_lower = _normalize_text(text)
-        if self._automaton is not None:
-            seen = set()
-            hits = []
-            for _, (idx, kw) in self._automaton.iter(text_lower):
-                if idx not in seen:
-                    seen.add(idx)
-                    hits.append(kw)
-            return hits
-        return [kw for kw in self._keywords if kw in text_lower]
-
-
 class ScoringEngine:
     """Computes multi-signal similarity scores for DC matching."""
 
     def __init__(
         self,
         weights: Dict[str, float],
+        embedding_engine: Optional[EmbeddingEngine] = None,
         *,
         dc_doc_frequencies: Optional[Dict[str, int]] = None,
         total_doc_count: int = 0,
+        log_source_families: Optional[Dict[str, str]] = None,
     ) -> None:
         self.weights = weights
+        self.embedding_engine = embedding_engine
         self._dc_df = dc_doc_frequencies or {}
         self._total_docs = total_doc_count
-        self._kw_matchers: Dict[str, AhoCorasickMatcher] = {}
+        self.log_source_families: Dict[str, str] = {
+            str(k).lower(): str(v).lower()
+            for k, v in (log_source_families or {}).items()
+            if v
+        }
 
-    def precompile_keywords(self, dc_id: str, keywords: List[str]) -> None:
-        self._kw_matchers[dc_id] = AhoCorasickMatcher(keywords)
+    def score_semantic(
+        self,
+        log_embedding: Optional[np.ndarray],
+        dc_id: str,
+    ) -> float:
+        """Cosine similarity between the log embedding and the DC embedding."""
+        if self.embedding_engine is None or log_embedding is None:
+            return 0.0
+        return max(0.0, self.embedding_engine.semantic_similarity(log_embedding, dc_id))
 
     def score_log_source(
         self,
@@ -128,6 +101,15 @@ class ScoringEngine:
         profile_id: str,
         profile_log_source_names: List[str],
     ) -> Tuple[float, str]:
+        """Graduated log-source matching.
+
+        Returns:
+            (score, evidence_string)
+            1.0  -- exact match via Logstash enrichment or name
+            0.8  -- prefix match (e.g. ``linux:auth`` vs ``linux:*``)
+            0.5  -- same family (e.g. ``linux:daemon`` and ``linux:syslog``)
+            0.0  -- no match
+        """
         if profile_id in event_dc_candidates:
             return 1.0, f"logstash_enrichment:{event_log_source}->{profile_id}"
 
@@ -135,9 +117,20 @@ class ScoringEngine:
         for name in profile_log_source_names:
             if src == name.lower():
                 return 1.0, f"exact_match:{name}"
-            if ":" in src and ":" in name.lower():
-                if src.split(":")[0] == name.lower().split(":")[0]:
-                    return 0.7, f"prefix_match:{name}"
+
+        for name in profile_log_source_names:
+            nl = name.lower()
+            if ":" in src and ":" in nl:
+                if src.split(":")[0] == nl.split(":")[0]:
+                    return 0.8, f"prefix_match:{name}"
+
+        src_family = self.log_source_families.get(src, "")
+        if src_family:
+            for name in profile_log_source_names:
+                other_family = self.log_source_families.get(name.lower(), "")
+                if other_family and src_family == other_family:
+                    return 0.5, f"family_match:{name}({src_family})"
+
         return 0.0, ""
 
     def score_keywords(
@@ -148,19 +141,21 @@ class ScoringEngine:
         logstash_keyword_hits: Optional[List[str]] = None,
     ) -> Tuple[float, List[str]]:
         if logstash_keyword_hits:
-            denom = max(len(profile_keywords), 1)
-            score = overlap_ratio(len(logstash_keyword_hits), denom)
+            n = len(logstash_keyword_hits)
+            # Hits are already scoped to this DC by Logstash; dividing by the full
+            # profile keyword list (often dozens of terms) collapses the score.
+            ratio = min(1.0, n / 4.0)
+            if profile_keywords:
+                ratio = max(ratio, overlap_ratio(n, min(len(profile_keywords), 20)))
+            score = min(1.0, ratio)
             return score, logstash_keyword_hits
 
         if not profile_keywords:
             return 0.0, []
 
-        matcher = self._kw_matchers.get(profile_id)
-        if matcher:
-            hits = matcher.search(event_text)
-        else:
-            text_lower = _normalize_text(event_text)
-            hits = [kw for kw in profile_keywords if _normalize_text(kw) in text_lower]
+        text_lower = _normalize_text(event_text)
+        hits = [kw for kw in profile_keywords
+                if _normalize_text(kw) in text_lower and len(kw) > 2]
 
         base_score = overlap_ratio(len(hits), len(profile_keywords))
 
@@ -174,25 +169,14 @@ class ScoringEngine:
         self,
         event_field_keys: Set[str],
         profile_fields: List[str],
-        ics_fields: Optional[List[str]] = None,
     ) -> Tuple[float, List[str]]:
-        event_lower = {k.lower() for k in event_field_keys}
-
-        check_fields = ics_fields if ics_fields else profile_fields
-        if not check_fields:
+        if not profile_fields:
             return 0.0, []
-
-        profile_lower = {f.lower() for f in check_fields}
+        event_lower = {k.lower() for k in event_field_keys}
+        profile_lower = {f.lower() for f in profile_fields}
         overlap = event_lower & profile_lower
         if not overlap:
-            if profile_fields and not ics_fields:
-                return 0.0, []
-            profile_lower = {f.lower() for f in profile_fields}
-            overlap = event_lower & profile_lower
-
-        if not overlap:
             return 0.0, []
-
         score = jaccard(overlap, profile_lower)
         return round(score, 4), sorted(overlap)
 
@@ -211,38 +195,8 @@ class ScoringEngine:
         score = jaccard(overlap, profile_set)
         return round(score, 4), sorted(overlap)
 
-    def score_channel(
-        self, event_text: str, profile_channels: List[str]
-    ) -> Tuple[float, str]:
-        if not profile_channels:
-            return 0.0, ""
-
-        text_norm = _normalize_text(event_text)
-        best_score = 0.0
-        best_channel = ""
-
-        for ch in profile_channels:
-            if not ch or ch.lower() == "none":
-                continue
-            ch_norm = _normalize_text(ch)
-            if ch_norm in text_norm:
-                return 1.0, ch
-
-            tokens = [t for t in re.split(r"[^a-zA-Z0-9_:/.-]+", ch_norm) if len(t) > 2]
-            stops = {"none", "event", "events", "log", "logs", "and", "with", "for", "the"}
-            tokens = [t for t in tokens if t not in stops]
-            if not tokens:
-                continue
-            matched = sum(1 for t in tokens if t in text_norm)
-            ratio = matched / len(tokens)
-            score = 1.0 if ratio >= 0.8 else (0.7 if ratio >= 0.6 else (0.4 if ratio >= 0.4 else 0.0))
-            if score > best_score:
-                best_score = score
-                best_channel = ch
-
-        return best_score, best_channel
-
     def compute_composite(self, signal_scores: Dict[str, float]) -> float:
+        """Weighted linear combination of all signals."""
         total = 0.0
         for signal, weight in self.weights.items():
             total += signal_scores.get(signal, 0.0) * weight

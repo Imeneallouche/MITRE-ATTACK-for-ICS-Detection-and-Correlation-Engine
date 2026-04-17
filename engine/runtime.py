@@ -20,8 +20,9 @@ from .alerting import AlertBuilder, alert_to_document
 from .config import EngineConfig, load_config
 from .correlation import CorrelationConfig, CorrelationEngine
 from .dc_loader import load_assets, load_datacomponents
+from .embeddings import EmbeddingEngine
 from .es_client import Checkpoint, CheckpointStore, ESClient
-from .feature_extractor import to_normalized_event
+from .feature_extractor import EventNormalizer, NormalizationRules
 from .matcher import DataComponentMatcher
 from .neo4j_client import Neo4jClient
 from .technique_mapper import TechniqueMapper
@@ -45,31 +46,11 @@ class DedupCache:
                 del self._data[old]
 
 
-def _build_fallback_map() -> Dict[str, List[Dict[str, str]]]:
-    """Hardcoded DC → technique fallback for when Neo4j is unavailable.
-
-    Derived from the Caldera attack chains and GRFICS context.
-    """
-    return {
-        "DC0078": [{"technique_id": "T0846", "technique_name": "Remote System Discovery", "probability": "0.6", "tactics": ["Discovery"]}],
-        "DC0082": [{"technique_id": "T0846", "technique_name": "Remote System Discovery", "probability": "0.5", "tactics": ["Discovery"]}],
-        "DC0085": [{"technique_id": "T0861", "technique_name": "Point & Tag Identification", "probability": "0.5", "tactics": ["Collection"]}],
-        "DC0067": [{"technique_id": "T0812", "technique_name": "Default Credentials", "probability": "0.6", "tactics": ["Lateral Movement", "Initial Access"]}],
-        "DC0038": [{"technique_id": "T0871", "technique_name": "Execution through API", "probability": "0.5", "tactics": ["Execution"]}],
-        "DC0109": [{"technique_id": "T0831", "technique_name": "Manipulation of Control", "probability": "0.5", "tactics": ["Impair Process Control"]}],
-        "DC0108": [{"technique_id": "T0816", "technique_name": "Device Restart/Shutdown", "probability": "0.4", "tactics": ["Inhibit Response Function"]}],
-        "DC0107": [{"technique_id": "T0801", "technique_name": "Monitor Process State", "probability": "0.5", "tactics": ["Collection"]}],
-        "DC0032": [{"technique_id": "T0807", "technique_name": "Command-Line Interface", "probability": "0.4", "tactics": ["Execution"]}],
-        "DC0064": [{"technique_id": "T0807", "technique_name": "Command-Line Interface", "probability": "0.5", "tactics": ["Execution"]}],
-        "DC0061": [{"technique_id": "T0889", "technique_name": "Modify Program", "probability": "0.4", "tactics": ["Impair Process Control", "Persistence"]}],
-        "DC0039": [{"technique_id": "T0889", "technique_name": "Modify Program", "probability": "0.3", "tactics": ["Persistence"]}],
-        "DC0004": [{"technique_id": "T0839", "technique_name": "Module Firmware", "probability": "0.5", "tactics": ["Persistence", "Inhibit Response Function"]}],
-    }
-
-
 class DetectionRuntime:
-    def __init__(self, config: EngineConfig) -> None:
+    def __init__(self, config: EngineConfig, *, embeddings_enabled: bool = True) -> None:
         self.config = config
+        self.excluded_asset_ids = set(config.excluded_asset_ids)
+
         self.es = ESClient(
             config.es_hosts,
             timeout_seconds=int(config.raw["elasticsearch"]["timeout_seconds"]),
@@ -77,19 +58,41 @@ class DetectionRuntime:
         self.profiles = load_datacomponents(config.datacomponents_dir)
         self.assets_by_id, self.assets_by_ip = load_assets(config.assets_file)
 
+        self.normalizer = EventNormalizer(
+            rules=NormalizationRules.from_config(config.normalization),
+            asset_by_ip=self.assets_by_ip,
+        )
+
+        use_embeddings = embeddings_enabled and config.embeddings_enabled
+        self.embedding_engine: Optional[EmbeddingEngine] = None
+        if use_embeddings:
+            self.embedding_engine = EmbeddingEngine(
+                model_name=config.embedding_model,
+                device=config.embedding_device,
+                enabled=True,
+            )
+            dc_texts = {p.id: p.embedding_text for p in self.profiles if p.embedding_text}
+            self.embedding_engine.precompute_dc_embeddings(dc_texts)
+
         self.matcher = DataComponentMatcher(
             profiles=self.profiles,
             scoring_weights=config.scoring_weights,
             candidate_threshold=config.candidate_threshold,
             high_confidence_threshold=config.high_confidence_threshold,
+            embedding_engine=self.embedding_engine,
+            semantic_gate_threshold=config.semantic_gate_threshold,
+            log_source_families=config.log_source_families,
         )
 
-        corr_cfg = CorrelationConfig(
+        corr_cfg = CorrelationConfig.build(
             window_seconds=int(config.correlation["window_seconds"]),
             repeat_count_escalation=int(config.correlation["repeat_count_escalation"]),
             per_event_correlation_boost=float(config.correlation["per_event_correlation_boost"]),
             max_correlation_boost=float(config.correlation["max_correlation_boost"]),
             chain_step_boost=float(config.correlation["chain_step_boost"]),
+            decay_half_life_seconds=float(config.correlation.get("decay_half_life_seconds", 120.0)),
+            chain_rules=config.correlation_chain_rules,
+            network_datacomponents=config.correlation_network_datacomponents,
         )
         self.correlation = CorrelationEngine(cfg=corr_cfg)
 
@@ -107,7 +110,8 @@ class DetectionRuntime:
             alpha_group=float(tm_cfg.get("alpha_group", 0.3)),
             alpha_asset=float(tm_cfg.get("alpha_asset", 0.5)),
             max_candidates=int(tm_cfg.get("max_candidates", 5)),
-            fallback_map=_build_fallback_map(),
+            fallback_map=config.technique_fallback,
+            asset_role_map=config.technique_asset_role_map,
         )
 
         self.alert_builder = AlertBuilder(
@@ -138,9 +142,9 @@ class DetectionRuntime:
                 continue
             self.dedup.add(dedup_key, event_ts)
 
-            event = to_normalized_event(hit, asset_by_ip=self.assets_by_ip)
+            event = self.normalizer.normalize(hit)
 
-            if event.asset_id in {"kali", "caldera"}:
+            if event.asset_id in self.excluded_asset_ids:
                 continue
 
             matches = self.matcher.match_event(event)
@@ -148,7 +152,6 @@ class DetectionRuntime:
                 continue
 
             top_match = matches[0]
-
             penalized = top_match.similarity_score
             if event.asset_id.startswith("unknown"):
                 penalized = max(0.0, penalized - self.config.unknown_asset_penalty)
@@ -163,7 +166,7 @@ class DetectionRuntime:
                 match=top_match,
                 group=group,
                 boosts=boosts,
-                strategy="multi_signal_weighted+correlation+knowledge_graph",
+                strategy="semantic_gate+multi_signal_weighted+correlation+knowledge_graph",
                 threshold=threshold,
                 sources_used=[event.log_source_normalized, f"dc:{top_match.datacomponent_id}"],
                 related_matches=matches[1:4],
@@ -209,16 +212,18 @@ class DetectionRuntime:
         search_after = None
         try:
             while True:
+                bool_query: Dict[str, Any] = {
+                    "must": [{"range": {"@timestamp": {"gte": start, "lt": end}}}],
+                }
+                if self.excluded_asset_ids:
+                    bool_query["must_not"] = [
+                        {"terms": {"asset_id": sorted(self.excluded_asset_ids)}}
+                    ]
                 body: Dict[str, Any] = {
                     "size": self.config.batch_size,
                     "sort": [{"@timestamp": "asc"}, {"_id": "asc"}],
                     "pit": {"id": pit, "keep_alive": "2m"},
-                    "query": {
-                        "bool": {
-                            "must": [{"range": {"@timestamp": {"gte": start, "lt": end}}}],
-                            "must_not": [{"terms": {"asset_id": ["kali", "caldera"]}}],
-                        }
-                    },
+                    "query": {"bool": bool_query},
                 }
                 if search_after:
                     body["search_after"] = search_after
@@ -245,6 +250,7 @@ class DetectionRuntime:
                     batch_size=self.config.batch_size,
                     pit_id=pit,
                     search_after=last_sort,
+                    excluded_asset_ids=sorted(self.excluded_asset_ids),
                 )
                 hits = result.get("hits", {}).get("hits", [])
                 if not hits:
@@ -298,6 +304,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", help="Backtest end timestamp (ISO8601)")
     parser.add_argument("--bootstrap-templates", action="store_true", help="Install ES index templates")
     parser.add_argument("--no-graph", action="store_true", help="Disable Neo4j integration")
+    parser.add_argument("--no-embeddings", action="store_true", help="Disable semantic embedding model (falls back to metadata-only scoring)")
     return parser
 
 
@@ -312,7 +319,9 @@ def main() -> int:
     if args.no_graph:
         cfg.raw.setdefault("neo4j", {})["enabled"] = False
 
-    runtime = DetectionRuntime(cfg)
+    embeddings_enabled = not args.no_embeddings
+
+    runtime = DetectionRuntime(cfg, embeddings_enabled=embeddings_enabled)
 
     if args.bootstrap_templates:
         runtime.bootstrap_templates()

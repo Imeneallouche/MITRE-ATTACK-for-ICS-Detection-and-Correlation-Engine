@@ -1,3 +1,11 @@
+"""Load DataComponent profiles from JSON and build embedding text.
+
+Each DataComponent JSON has a ``log_sources`` array with Name/Channel
+entries.  The Channel strings contain rich natural-language descriptions of
+what log events the DC detects.  We concatenate the DC description with
+every non-trivial Channel string to produce a single embedding text that
+captures the full detection semantics.
+"""
 from __future__ import annotations
 
 import json
@@ -15,6 +23,38 @@ def _as_list(value):
     return [value]
 
 
+_SKIP_CHANNELS = {"none", "n/a", "", "null"}
+
+
+def build_dc_embedding_text(
+    description: str,
+    log_sources: List[LogSourceEntry],
+) -> str:
+    """Build a single text block suitable for embedding.
+
+    Combines the DC description with all non-trivial Channel strings from
+    log_sources so that semantic similarity captures both the high-level
+    DC purpose and the specific log-event patterns it covers.
+    """
+    parts = [description.strip()] if description.strip() else []
+
+    seen_channels: set = set()
+    for ls in log_sources:
+        ch = ls.channel.strip()
+        ch_lower = ch.lower()
+        if ch_lower in _SKIP_CHANNELS:
+            continue
+        if ch_lower in seen_channels:
+            continue
+        seen_channels.add(ch_lower)
+        parts.append(ch)
+
+    text = " ".join(parts)
+    if len(text) > 8000:
+        text = text[:8000]
+    return text
+
+
 def load_datacomponents(datacomponents_dir: Path) -> List[DataComponentProfile]:
     profiles: List[DataComponentProfile] = []
     for path in sorted(datacomponents_dir.glob("*.json")):
@@ -24,21 +64,24 @@ def load_datacomponents(datacomponents_dir: Path) -> List[DataComponentProfile]:
         searchable = data.get("searchable_indexes", {})
         log_sources = []
         for entry in data.get("log_sources", []):
-            # JSON files are inconsistent: some use Name/Channel, some name/channel.
             name = entry.get("Name") or entry.get("name") or "unknown"
             channel = entry.get("Channel") or entry.get("channel") or "None"
             log_sources.append(LogSourceEntry(name=name.strip(), channel=str(channel).strip()))
 
+        description = str(data.get("description", ""))
+        emb_text = build_dc_embedding_text(description, log_sources)
+
         profile = DataComponentProfile(
             id=str(data.get("id", path.stem)),
             name=str(data.get("name", path.stem)),
-            description=str(data.get("description", "")),
+            description=description,
             platforms=[str(x).lower() for x in _as_list(searchable.get("platforms"))],
             log_source_types=[str(x).lower() for x in _as_list(searchable.get("log_source_types"))],
             categories=[str(x).lower() for x in _as_list(searchable.get("categories"))],
             fields=[str(x) for x in _as_list(searchable.get("fields"))],
             keywords=[str(x) for x in _as_list(searchable.get("keywords"))],
             log_sources=log_sources,
+            embedding_text=emb_text,
             raw=data,
         )
         profiles.append(profile)

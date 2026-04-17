@@ -1,101 +1,29 @@
 """Temporal correlation engine for multi-stage attack detection.
 
-Groups related CandidateMatch objects by asset and time window,
-applies chain-step boosting for known ICS attack sequences, and
-supports cross-asset correlation for network-related data components.
+Groups related CandidateMatch objects by asset and time window, applies
+chain-step boosting for ordered DataComponent transitions, and supports
+cross-asset grouping for network-flow oriented DataComponents.
 
-Chain Rules
------------
-Static rules encode expected ICS attack progressions:
-- Recon (DC0078/DC0082) -> Content analysis (DC0085)
-- Credential access (DC0067) -> Execution (DC0038)
-- Modbus write (DC0085) -> Process alarm (DC0109)
-- Process alarm (DC0109) -> Device alarm (DC0108)
-etc.
+All chain transitions and network DataComponents are supplied via
+configuration; the engine itself encodes no environment-specific
+knowledge.
+
+Temporal Decay
+--------------
+Correlation boosts are decayed exponentially with the time delta between
+the current event and the group's last event:
+
+    effective_boost = base_boost * exp(-delta_t / decay_half_life)
 """
 from __future__ import annotations
 
+import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from .models import CandidateMatch, CorrelationGroup
-
-NETWORK_DCS: FrozenSet[str] = frozenset({"DC0078", "DC0082", "DC0085"})
-
-CHAIN_RULES: FrozenSet[Tuple[str, str]] = frozenset({
-    # Enterprise recon -> execution
-    ("DC0067", "DC0032"),
-    ("DC0032", "DC0034"),
-    ("DC0032", "DC0001"),
-    ("DC0001", "DC0039"),
-    ("DC0082", "DC0032"),
-    ("DC0033", "DC0040"),
-    ("DC0040", "DC0061"),
-    ("DC0067", "DC0082"),
-    ("DC0082", "DC0078"),
-    # Network recon -> content analysis
-    ("DC0078", "DC0085"),
-    ("DC0078", "DC0082"),
-    ("DC0085", "DC0082"),
-    ("DC0078", "DC0109"),
-    ("DC0082", "DC0109"),
-    # Credential access -> execution
-    ("DC0067", "DC0038"),
-    ("DC0067", "DC0109"),
-    ("DC0002", "DC0067"),
-    ("DC0002", "DC0038"),
-    ("DC0002", "DC0032"),
-    # ICS process manipulation chains
-    ("DC0085", "DC0109"),
-    ("DC0082", "DC0108"),
-    ("DC0109", "DC0108"),
-    ("DC0038", "DC0109"),
-    ("DC0038", "DC0033"),
-    ("DC0107", "DC0109"),
-    ("DC0107", "DC0108"),
-    # Lateral movement
-    ("DC0067", "DC0039"),
-    ("DC0039", "DC0032"),
-    ("DC0032", "DC0085"),
-    ("DC0067", "DC0064"),
-    ("DC0064", "DC0032"),
-    # Evasion -> impact
-    ("DC0033", "DC0109"),
-    ("DC0033", "DC0108"),
-    ("DC0061", "DC0109"),
-    ("DC0040", "DC0109"),
-    ("DC0040", "DC0032"),
-    ("DC0061", "DC0032"),
-    # Network -> process
-    ("DC0078", "DC0032"),
-    ("DC0078", "DC0033"),
-    ("DC0078", "DC0038"),
-    ("DC0078", "DC0067"),
-    # Application -> alarm
-    ("DC0038", "DC0108"),
-    ("DC0060", "DC0033"),
-    ("DC0060", "DC0032"),
-    # Command execution -> impact
-    ("DC0064", "DC0109"),
-    ("DC0064", "DC0108"),
-    ("DC0064", "DC0038"),
-    ("DC0029", "DC0032"),
-    ("DC0029", "DC0064"),
-    # File operations in attack chains
-    ("DC0039", "DC0061"),
-    ("DC0061", "DC0038"),
-    ("DC0055", "DC0039"),
-    # Module/firmware attacks
-    ("DC0016", "DC0004"),
-    ("DC0004", "DC0108"),
-    ("DC0016", "DC0109"),
-    # Service manipulation
-    ("DC0060", "DC0065"),
-    ("DC0065", "DC0033"),
-    ("DC0041", "DC0060"),
-})
 
 
 @dataclass
@@ -105,6 +33,33 @@ class CorrelationConfig:
     per_event_correlation_boost: float
     max_correlation_boost: float
     chain_step_boost: float
+    decay_half_life_seconds: float = 120.0
+    chain_rules: FrozenSet[Tuple[str, str]] = field(default_factory=frozenset)
+    network_datacomponents: FrozenSet[str] = field(default_factory=frozenset)
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        window_seconds: int,
+        repeat_count_escalation: int,
+        per_event_correlation_boost: float,
+        max_correlation_boost: float,
+        chain_step_boost: float,
+        decay_half_life_seconds: float = 120.0,
+        chain_rules: Optional[Iterable[Tuple[str, str]]] = None,
+        network_datacomponents: Optional[Iterable[str]] = None,
+    ) -> "CorrelationConfig":
+        return cls(
+            window_seconds=window_seconds,
+            repeat_count_escalation=repeat_count_escalation,
+            per_event_correlation_boost=per_event_correlation_boost,
+            max_correlation_boost=max_correlation_boost,
+            chain_step_boost=chain_step_boost,
+            decay_half_life_seconds=decay_half_life_seconds,
+            chain_rules=frozenset(tuple(p) for p in (chain_rules or [])),
+            network_datacomponents=frozenset(network_datacomponents or []),
+        )
 
 
 class CorrelationEngine:
@@ -134,6 +89,10 @@ class CorrelationEngine:
         group.add_match(match)
         chain_boost = self._maybe_chain_boost(group, match)
 
+        delta_t = (match.event.timestamp - group.last_timestamp).total_seconds()
+        delta_t = max(delta_t, 0.0)
+        decay = self._temporal_decay(delta_t)
+
         repeat_boost = 0.0
         dc_counts: Dict[str, int] = {}
         for m in group.matches:
@@ -142,16 +101,24 @@ class CorrelationEngine:
         if max_count >= self.cfg.repeat_count_escalation:
             repeat_boost = self.cfg.per_event_correlation_boost
 
-        corr_boost = min(
-            self.cfg.max_correlation_boost,
-            self.cfg.per_event_correlation_boost * max(len(group.matches) - 1, 0) + repeat_boost,
+        raw_corr_boost = (
+            self.cfg.per_event_correlation_boost * max(len(group.matches) - 1, 0)
+            + repeat_boost
         )
+        corr_boost = min(self.cfg.max_correlation_boost, raw_corr_boost) * decay
+        chain_boost *= decay
 
         group.aggregate_score = min(
             1.0,
             max(group.aggregate_score, match.similarity_score) + corr_boost + chain_boost,
         )
         return group, {"correlation_boost": corr_boost, "chain_boost": chain_boost}
+
+    def _temporal_decay(self, delta_seconds: float) -> float:
+        """Exponential decay factor based on time since last event."""
+        if self.cfg.decay_half_life_seconds <= 0:
+            return 1.0
+        return math.exp(-0.693 * delta_seconds / self.cfg.decay_half_life_seconds)
 
     def _select_group(self, match: CandidateMatch) -> Optional[CorrelationGroup]:
         now = match.event.timestamp
@@ -172,11 +139,17 @@ class CorrelationEngine:
                 score += 2.0
 
             prev_dc = group.chain_ids[-1] if group.chain_ids else ""
-            if (prev_dc, match.datacomponent_id) in CHAIN_RULES:
+            if (prev_dc, match.datacomponent_id) in self.cfg.chain_rules:
                 score += 3.0
 
             if group.asset_id == match.event.asset_id:
                 score += 1.0
+
+            recency_seconds = (now - group.last_timestamp).total_seconds()
+            if recency_seconds < 60:
+                score += 1.0
+            elif recency_seconds < 120:
+                score += 0.5
 
             if score > best_score:
                 best_score = score
@@ -184,11 +157,15 @@ class CorrelationEngine:
 
         return best
 
-    @staticmethod
-    def _cross_asset_eligible(group: CorrelationGroup, match: CandidateMatch) -> bool:
-        if match.datacomponent_id in NETWORK_DCS:
+    def _cross_asset_eligible(
+        self, group: CorrelationGroup, match: CandidateMatch,
+    ) -> bool:
+        net = self.cfg.network_datacomponents
+        if not net:
+            return False
+        if match.datacomponent_id in net:
             return True
-        if group.chain_ids and group.chain_ids[-1] in NETWORK_DCS:
+        if group.chain_ids and group.chain_ids[-1] in net:
             return True
         return False
 
@@ -200,7 +177,7 @@ class CorrelationEngine:
         prev = group.chain_ids[-1]
         cur = match.datacomponent_id
 
-        if (prev, cur) in CHAIN_RULES and cur not in group.chain_ids:
+        if (prev, cur) in self.cfg.chain_rules and cur not in group.chain_ids:
             group.chain_ids.append(cur)
             group.chain_depth += 1
             return self.cfg.chain_step_boost

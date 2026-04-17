@@ -91,21 +91,13 @@ services:
       - ./shared_logs/ews/pacct:/var/log/pacct
       # EXPORT: Cron for persistence monitoring
       - ./shared_logs/ews/cron.log:/var/log/cron.log
-      # EXPORT: Engineering desktop / VNC / noVNC (DC0067/DC0038)
+      # EXPORT: Workstation supervisor (noVNC/X11 stack bootstrap — high-signal only)
       - ./shared_logs/ews/supervisord.log:/var/log/supervisord.log
-      - ./shared_logs/ews/xvfb.log:/var/log/xvfb.log
-      - ./shared_logs/ews/xvfb.err:/var/log/xvfb.err
-      - ./shared_logs/ews/xfce.log:/var/log/xfce.log
-      - ./shared_logs/ews/xfce.err:/var/log/xfce.err
-      - ./shared_logs/ews/x11vnc.log:/var/log/x11vnc.log
-      - ./shared_logs/ews/x11vnc.out:/var/log/x11vnc.out
-      - ./shared_logs/ews/x11vnc.err:/var/log/x11vnc.err
-      - ./shared_logs/ews/novnc.out:/var/log/novnc.out
-      - ./shared_logs/ews/novnc.err:/var/log/novnc.err
     networks:
       a-grfics-admin: {}
       b-ics-net:
         ipv4_address: 192.168.95.5
+      c-dmz-net: {}
 
   hmi:
     image: fortiphyd/grfics-scadalts
@@ -142,6 +134,7 @@ services:
     # ── Attacker node – NOT part of ICS site; for offensive simulation only
     image: fortiphyd/grfics-attacker
     container_name: kali
+    privileged: true
     hostname: kali
     cap_add:
       - NET_ADMIN
@@ -303,11 +296,8 @@ services:
     user: root
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      # ── Shared log directories (read from all ICS containers) ───────────
+      # ── Shared log directories (ICS/OT file-backed logs only; see docs/Collected Logs.md)
       - ./shared_logs:/shared_logs:ro
-      # ── Docker container stdout/stderr (for containers not writing files) ─
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
       # ── Asset inventory for enrichment ──────────────────────────────────
       - ./assets.json:/data/assets.json:ro
     depends_on:
@@ -317,6 +307,37 @@ services:
       - a-grfics-admin
     command: filebeat -e -strict.perms=false
     restart: unless-stopped
+
+  # ── Detection Engine ─────────────────────────────────────────────────
+
+  detection-engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    image: ics-detection-engine
+    container_name: detection-engine
+    hostname: detection-engine
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./datacomponents:/app/datacomponents:ro
+      - ./assets.json:/app/assets.json:ro
+      - ./state:/app/state
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Inside the container, localhost is NOT Elasticsearch — use the compose service name.
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - a-grfics-admin
+    command:
+      - "--config"
+      - "/app/config/detection.yml"
+      - "--bootstrap-templates"
+      - "--mode"
+      - "stream"
 
 # ── Networks ─────────────────────────────────────────────────────────────────
 

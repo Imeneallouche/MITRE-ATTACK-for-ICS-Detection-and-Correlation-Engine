@@ -27,6 +27,7 @@ class DataComponentProfile:
     fields: List[str]
     keywords: List[str]
     log_sources: List[LogSourceEntry]
+    embedding_text: str = ""
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -49,6 +50,7 @@ class NormalizedEvent:
     categories: List[str] = field(default_factory=list)
     mitre_dc_candidates: List[str] = field(default_factory=list)
     mitre_keyword_hits: Dict[str, List[str]] = field(default_factory=dict)
+    embedding_text: str = ""
 
 
 @dataclass
@@ -62,6 +64,8 @@ class CandidateMatch:
     confidence_tier: str
     event: NormalizedEvent
     is_ambiguous: bool = False
+    semantic_score: float = 0.0
+    gate_passed: str = ""
 
 
 @dataclass
@@ -124,6 +128,9 @@ class DetectionAlert:
     matched_categories: List[str]
     matched_log_source: str
     matched_channel: str
+
+    semantic_score: float
+    gate_reason: str
 
     technique: Optional[TechniqueAttribution]
     alternative_techniques: List[TechniqueAttribution]

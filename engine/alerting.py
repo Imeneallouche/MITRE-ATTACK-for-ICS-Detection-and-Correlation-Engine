@@ -1,9 +1,10 @@
 """Alert builder with full explainability and technique attribution.
 
 Each alert includes:
-- The triggering GRFICS log(s)
+- The triggering log(s)
 - Matched DataComponent(s) with feature-level evidence
-- Similarity and confidence scores
+- Similarity and confidence scores, including semantic similarity detail
+- Gate reason explaining why the DC was considered
 - Correlation context (group, chain, repeat)
 - Probable MITRE ATT&CK for ICS technique from the knowledge graph
 - Mitigations, threat groups, and software from the graph
@@ -85,6 +86,28 @@ class AlertBuilder:
         if match.event.asset_id in {"unknown", "", None}:
             metadata["unknown_asset"] = True
 
+        matched_channel = ""
+        sem_detail = match.evidence.get("semantic_similarity", 0.0)
+        ls_ev = str(match.evidence.get("matched_log_source", "") or "")
+        if match.gate_passed.startswith("logstash"):
+            matched_channel = (
+                f"dc={match.datacomponent_id} ({match.datacomponent_name}); "
+                f"gate=logstash_enrichment; log_source_match={ls_ev}"
+            )
+        elif isinstance(sem_detail, (int, float)) and sem_detail > 0:
+            matched_channel = f"semantic_cosine:{sem_detail:.4f}; {ls_ev}".strip()
+        elif ls_ev:
+            matched_channel = ls_ev
+
+        metadata["triggering_event"] = {
+            "log_message": match.event.log_message,
+            "log_type": match.event.log_type,
+            "log_source_normalized": match.event.log_source_normalized,
+            "datacomponent_id": match.datacomponent_id,
+            "datacomponent_name": match.datacomponent_name,
+            "gate_reason": match.gate_passed,
+        }
+
         alert = DetectionAlert(
             detection_id=str(uuid.uuid4()),
             timestamp=match.event.timestamp.isoformat(),
@@ -106,7 +129,9 @@ class AlertBuilder:
             matched_keywords=match.evidence.get("matched_keywords", []),
             matched_categories=match.evidence.get("matched_categories", []),
             matched_log_source=match.evidence.get("matched_log_source", ""),
-            matched_channel=match.evidence.get("matched_channel", ""),
+            matched_channel=matched_channel,
+            semantic_score=round(match.semantic_score, 4),
+            gate_reason=match.gate_passed,
             technique=primary_technique,
             alternative_techniques=alt_techniques,
             correlation_group_id=group.group_id,
@@ -184,8 +209,6 @@ class AlertBuilder:
 def alert_to_document(alert: DetectionAlert) -> Dict[str, Any]:
     """Serialise a DetectionAlert to an Elasticsearch-friendly dict."""
     doc = asdict(alert)
-    if doc.get("technique") and isinstance(doc["technique"], dict):
-        pass  # asdict handles nested dataclasses
     return doc
 
 
@@ -196,12 +219,11 @@ def _snippet(message: str, limit: int = 200) -> str:
 
 
 def _extract_matched_fields(match: CandidateMatch) -> Dict[str, Any]:
+    """Return only the event fields whose keys overlap the DC's profile."""
     fields: Dict[str, Any] = {}
     for f in match.evidence.get("matched_fields", []):
+        target = str(f).lower()
         for key, value in match.event.fields.items():
-            if key.lower() == str(f).lower():
+            if key.lower() == target:
                 fields[key] = value
-    for key in ("src_ip", "dst_ip", "auth_user", "syslog_program", "event_type", "alert.signature"):
-        if key in match.event.fields and key not in fields:
-            fields[key] = match.event.fields[key]
     return fields

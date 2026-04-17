@@ -1,9 +1,16 @@
-"""Configuration loader for the ICS Detection Engine."""
+"""Configuration loader for the ICS Detection Engine.
+
+The engine is fully data-driven: every environment-specific behaviour
+(field aliases, category rules, log-source families, correlation chains,
+technique fallbacks, asset role map, etc.) is read from the YAML config.
+The loader normalises shapes so consumers can rely on stable types.
+"""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -11,6 +18,8 @@ import yaml
 @dataclass
 class EngineConfig:
     raw: Dict[str, Any]
+
+    # ── Engine ─────────────────────────────────────────────────────────────
 
     @property
     def polling_interval_seconds(self) -> int:
@@ -23,6 +32,15 @@ class EngineConfig:
     @property
     def checkpoint_file(self) -> Path:
         return Path(self.raw["engine"]["checkpoint_file"])
+
+    @property
+    def excluded_asset_ids(self) -> List[str]:
+        raw = self.raw.get("engine", {}).get("excluded_asset_ids")
+        if isinstance(raw, list):
+            return [str(x) for x in raw if x]
+        return []
+
+    # ── Thresholds ─────────────────────────────────────────────────────────
 
     @property
     def candidate_threshold(self) -> float:
@@ -40,16 +58,52 @@ class EngineConfig:
     def unknown_asset_penalty(self) -> float:
         return float(self.raw["thresholds"]["unknown_asset_penalty"])
 
+    # ── Scoring ────────────────────────────────────────────────────────────
+
     @property
     def scoring_weights(self) -> Dict[str, float]:
         return {k: float(v) for k, v in self.raw["scoring_weights"].items()}
 
     @property
+    def log_source_families(self) -> Dict[str, str]:
+        raw = self.raw.get("log_source_families")
+        if isinstance(raw, dict):
+            return {str(k).lower(): str(v).lower() for k, v in raw.items() if v}
+        return {}
+
+    # ── Correlation ────────────────────────────────────────────────────────
+
+    @property
     def correlation(self) -> Dict[str, Any]:
-        return self.raw["correlation"]
+        return self.raw.get("correlation", {})
+
+    @property
+    def correlation_chain_rules(self) -> List[Tuple[str, str]]:
+        raw = self.correlation.get("chain_rules") or []
+        rules: List[Tuple[str, str]] = []
+        for entry in raw:
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                rules.append((str(entry[0]), str(entry[1])))
+        return rules
+
+    @property
+    def correlation_network_datacomponents(self) -> List[str]:
+        raw = self.correlation.get("network_datacomponents") or []
+        return [str(x) for x in raw if x]
+
+    # ── Normalization ──────────────────────────────────────────────────────
+
+    @property
+    def normalization(self) -> Dict[str, Any]:
+        return self.raw.get("normalization", {}) or {}
+
+    # ── Elasticsearch ──────────────────────────────────────────────────────
 
     @property
     def es_hosts(self) -> List[str]:
+        env = os.environ.get("ELASTICSEARCH_HOSTS", "").strip()
+        if env:
+            return [h.strip() for h in env.split(",") if h.strip()]
         return list(self.raw["elasticsearch"]["hosts"])
 
     @property
@@ -72,6 +126,8 @@ class EngineConfig:
     def assets_file(self) -> Path:
         return Path(self.raw["paths"]["assets_file"])
 
+    # ── Neo4j ──────────────────────────────────────────────────────────────
+
     @property
     def neo4j_enabled(self) -> bool:
         neo = self.raw.get("neo4j", {})
@@ -93,9 +149,51 @@ class EngineConfig:
     def neo4j_cache_ttl(self) -> int:
         return int(self.raw.get("neo4j", {}).get("cache_ttl_seconds", 3600))
 
+    # ── Technique mapper ───────────────────────────────────────────────────
+
     @property
     def technique_mapper(self) -> Dict[str, Any]:
-        return self.raw.get("technique_mapper", {})
+        return self.raw.get("technique_mapper", {}) or {}
+
+    @property
+    def technique_asset_role_map(self) -> Dict[str, List[str]]:
+        raw = self.technique_mapper.get("asset_role_map") or {}
+        if not isinstance(raw, dict):
+            return {}
+        out: Dict[str, List[str]] = {}
+        for k, v in raw.items():
+            if isinstance(v, list):
+                out[str(k).lower()] = [str(x) for x in v]
+        return out
+
+    @property
+    def technique_fallback(self) -> Dict[str, List[Dict[str, Any]]]:
+        raw = self.technique_mapper.get("fallback") or {}
+        if not isinstance(raw, dict):
+            return {}
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for dc, entries in raw.items():
+            if isinstance(entries, list):
+                out[str(dc)] = [e for e in entries if isinstance(e, dict)]
+        return out
+
+    # ── Embeddings ─────────────────────────────────────────────────────────
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        return bool(self.raw.get("embeddings", {}).get("enabled", True))
+
+    @property
+    def embedding_model(self) -> str:
+        return str(self.raw.get("embeddings", {}).get("model", "BAAI/bge-small-en-v1.5"))
+
+    @property
+    def embedding_device(self) -> str:
+        return str(self.raw.get("embeddings", {}).get("device", "cpu"))
+
+    @property
+    def semantic_gate_threshold(self) -> float:
+        return float(self.raw.get("embeddings", {}).get("semantic_gate_threshold", 0.25))
 
 
 def load_config(path: Path) -> EngineConfig:

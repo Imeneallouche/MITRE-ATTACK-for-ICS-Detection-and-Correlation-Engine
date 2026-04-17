@@ -1,73 +1,32 @@
-"""DataComponent matcher with scientific multi-signal scoring.
+"""DataComponent matcher with 2-tier gate and semantic similarity scoring.
 
-Uses the ScoringEngine for mathematically grounded similarity computation
-and provides ICS-specific field mappings for GRFICS log alignment.
+Tier 1 -- Candidate Gate
+    For each DC, check whether the event passes either:
+      a) Log-source gate: Logstash enrichment maps the event to this DC,
+         or the normalised log-source name matches a DC log_source entry.
+      b) Semantic gate: cosine similarity between the event embedding and
+         the DC embedding exceeds ``semantic_gate_threshold``.
+
+    Only DCs that pass at least one gate proceed to Tier 2.
+
+Tier 2 -- Composite Scoring
+    Uses ScoringEngine to compute a weighted combination of five signals:
+    S_sem, S_ls, S_kw, S_fld, S_cat.
 """
 from __future__ import annotations
 
 import uuid
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from .feature_extractor import infer_categories
+import numpy as np
+
+from .embeddings import EmbeddingEngine
 from .models import CandidateMatch, DataComponentProfile, NormalizedEvent
 from .scorer import ScoringEngine
 
-ICS_FIELD_MAP: Dict[str, List[str]] = {
-    "DC0109": [
-        "ics.alarm_type", "ics.severity", "ics.protocol", "modbus.function_code",
-        "modbus.exception_code", "process_alarm", "alarm_state", "setpoint",
-    ],
-    "DC0108": [
-        "ics.severity", "ics.protocol", "modbus.exception_code", "kern",
-        "reboot", "shutdown", "device_fault",
-    ],
-    "DC0107": [
-        "ics.protocol", "modbus.function_code", "pacct", "process_value",
-        "current_value", "tag_name",
-    ],
-    "DC0078": [
-        "src_ip", "dst_ip", "src_port", "dest_port", "protocol", "bytes",
-        "packets", "duration", "netfilter", "action",
-    ],
-    "DC0082": ["src_ip", "dst_ip", "src_port", "dest_port", "protocol"],
-    "DC0085": [
-        "src_ip", "dst_ip", "payload", "event_type", "alert.signature",
-        "ics.protocol", "modbus.function_code", "app_proto",
-    ],
-    "DC0032": [
-        "syslog_program", "syslog_pid", "audit_type", "process_name", "pid",
-        "audit.exe", "audit.comm", "command",
-    ],
-    "DC0033": [
-        "syslog_program", "syslog_pid", "audit_type", "exit_code",
-        "audit.exe", "signal",
-    ],
-    "DC0067": [
-        "auth_user", "src_ip", "auth_method", "pam_service", "session_id",
-        "sshd", "accepted",
-    ],
-    "DC0038": [
-        "syslog_program", "event_type", "status_code", "request_method",
-        "http_path", "catalina", "flask",
-    ],
-    "DC0061": ["file_path", "file_name", "audit.name", "audit.nametype"],
-    "DC0039": ["file_path", "file_name", "audit.name"],
-    "DC0040": ["file_path", "file_name", "audit.name"],
-    "DC0002": ["auth_user", "src_ip", "auth_method", "pam_service"],
-    "DC0064": [
-        "command", "cmdline", "audit.exe", "audit.comm", "syslog_program",
-    ],
-    "DC0004": ["firmware", "module", "kern", "insmod", "modprobe"],
-    "DC0016": ["module", "kern", "insmod", "modprobe", "lsmod"],
-    "DC0029": ["script", "python", "bash", "sh", "interpreter"],
-    "DC0060": ["service", "systemctl", "supervisor", "daemon"],
-    "DC0110": ["asset", "inventory", "device", "hostname"],
-    "DC0111": ["software", "version", "package", "binary"],
-}
-
 
 class DataComponentMatcher:
-    """Matches normalized events against DC profiles using scientific scoring."""
+    """Matches normalised events against DC profiles using 2-tier scoring."""
 
     def __init__(
         self,
@@ -75,38 +34,50 @@ class DataComponentMatcher:
         scoring_weights: Dict[str, float],
         candidate_threshold: float,
         high_confidence_threshold: float,
+        embedding_engine: Optional[EmbeddingEngine] = None,
+        semantic_gate_threshold: float = 0.25,
+        log_source_families: Optional[Dict[str, str]] = None,
     ) -> None:
         self.profiles = list(profiles)
         self._profile_by_id = {p.id: p for p in self.profiles}
         self.candidate_threshold = candidate_threshold
         self.high_confidence_threshold = high_confidence_threshold
+        self.semantic_gate_threshold = semantic_gate_threshold
+        self.embedding_engine = embedding_engine
 
-        self.scorer = ScoringEngine(weights=scoring_weights)
-        for p in self.profiles:
-            self.scorer.precompile_keywords(p.id, p.keywords)
+        self.scorer = ScoringEngine(
+            weights=scoring_weights,
+            embedding_engine=embedding_engine,
+            log_source_families=log_source_families,
+        )
 
     def match_event(self, event: NormalizedEvent) -> List[CandidateMatch]:
-        candidates: List[CandidateMatch] = []
+        log_embedding = None
+        if self.embedding_engine and self.embedding_engine.available:
+            log_embedding = self.embedding_engine.embed_text(event.embedding_text)
+
         enriched_ids = set(event.mitre_dc_candidates)
-        scored_ids: Set[str] = set()
 
-        if enriched_ids:
-            for dc_id in enriched_ids:
-                profile = self._profile_by_id.get(dc_id)
-                if profile is None:
-                    continue
-                candidate = self._score(event, profile)
-                scored_ids.add(dc_id)
-                if candidate.similarity_score >= self.candidate_threshold:
-                    candidates.append(candidate)
+        sem_scores: Dict[str, float] = {}
+        if log_embedding is not None and self.embedding_engine:
+            sem_scores = self.embedding_engine.bulk_semantic_similarity(log_embedding)
 
-        if not candidates:
-            for profile in self.profiles:
-                if profile.id in scored_ids:
-                    continue
-                candidate = self._score(event, profile)
-                if candidate.similarity_score >= self.candidate_threshold:
-                    candidates.append(candidate)
+        candidates: List[CandidateMatch] = []
+
+        for profile in self.profiles:
+            gate, gate_reason = self._passes_gate(
+                event, profile, enriched_ids, sem_scores,
+            )
+            if not gate:
+                continue
+
+            candidate = self._score(
+                event, profile, log_embedding,
+                sem_scores.get(profile.id, 0.0),
+                gate_reason,
+            )
+            if candidate.similarity_score >= self.candidate_threshold:
+                candidates.append(candidate)
 
         candidates.sort(key=lambda c: c.similarity_score, reverse=True)
 
@@ -119,7 +90,39 @@ class DataComponentMatcher:
 
         return candidates
 
-    def _score(self, event: NormalizedEvent, profile: DataComponentProfile) -> CandidateMatch:
+    def _passes_gate(
+        self,
+        event: NormalizedEvent,
+        profile: DataComponentProfile,
+        enriched_ids: Set[str],
+        sem_scores: Dict[str, float],
+    ) -> Tuple[bool, str]:
+        """Tier 1: check if either gate passes for this DC."""
+        if profile.id in enriched_ids:
+            return True, "logstash_enrichment"
+
+        src = event.log_source_normalized.lower()
+        for ls in profile.log_sources:
+            if src == ls.name.lower():
+                return True, f"log_source_exact:{ls.name}"
+            if ":" in src and ":" in ls.name.lower():
+                if src.split(":")[0] == ls.name.lower().split(":")[0]:
+                    return True, f"log_source_prefix:{ls.name}"
+
+        sem = sem_scores.get(profile.id, 0.0)
+        if sem >= self.semantic_gate_threshold:
+            return True, f"semantic:{sem:.3f}"
+
+        return False, ""
+
+    def _score(
+        self,
+        event: NormalizedEvent,
+        profile: DataComponentProfile,
+        log_embedding: Optional[np.ndarray],
+        precomputed_sem: float,
+        gate_reason: str,
+    ) -> CandidateMatch:
         ls_names = [ls.name for ls in profile.log_sources]
         ls_score, ls_evidence = self.scorer.score_log_source(
             event.mitre_dc_candidates,
@@ -128,38 +131,40 @@ class DataComponentMatcher:
             ls_names,
         )
 
-        event_text = event.log_message + " " + " ".join(str(v) for v in event.fields.values())
+        sem_score = precomputed_sem
+        if sem_score <= 0.0 and log_embedding is not None:
+            sem_score = self.scorer.score_semantic(log_embedding, profile.id)
+        sem_score = max(0.0, sem_score)
+
+        event_text = event.log_message + " " + " ".join(
+            str(v) for v in event.fields.values() if v is not None
+        )
         logstash_kw = event.mitre_keyword_hits.get(profile.id)
         kw_score, kw_hits = self.scorer.score_keywords(
             event_text, profile.id, profile.keywords, logstash_kw,
         )
 
-        ics_fields = ICS_FIELD_MAP.get(profile.id)
         fld_score, fld_hits = self.scorer.score_fields(
-            set(event.fields.keys()), profile.fields, ics_fields,
+            set(event.fields.keys()), profile.fields,
         )
 
-        event_cats = set(event.categories) if event.categories else set(
-            infer_categories(event.log_type, event.log_source_normalized, event.log_message)
+        cat_score, cat_hits = self.scorer.score_categories(
+            set(event.categories or []), profile.categories,
         )
-        cat_score, cat_hits = self.scorer.score_categories(event_cats, profile.categories)
-
-        channels = [ls.channel for ls in profile.log_sources]
-        ch_score, ch_hit = self.scorer.score_channel(event_text, channels)
 
         signal_scores = {
+            "semantic_match": sem_score,
             "log_source_match": ls_score,
             "keyword_match": kw_score,
             "field_match": fld_score,
             "category_match": cat_score,
-            "channel_match": ch_score,
         }
         similarity = self.scorer.compute_composite(signal_scores)
 
         confidence_tier = "low"
         if similarity >= self.high_confidence_threshold:
             confidence_tier = "high"
-        elif similarity >= 0.55:
+        elif similarity >= 0.50:
             confidence_tier = "medium"
 
         evidence = {
@@ -167,7 +172,7 @@ class DataComponentMatcher:
             "matched_keywords": kw_hits,
             "matched_fields": fld_hits,
             "matched_categories": cat_hits,
-            "matched_channel": ch_hit,
+            "semantic_similarity": round(sem_score, 4),
         }
 
         return CandidateMatch(
@@ -179,4 +184,6 @@ class DataComponentMatcher:
             evidence=evidence,
             confidence_tier=confidence_tier,
             event=event,
+            semantic_score=sem_score,
+            gate_passed=gate_reason,
         )
