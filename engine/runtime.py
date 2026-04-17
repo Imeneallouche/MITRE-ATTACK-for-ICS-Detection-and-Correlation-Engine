@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .alert_suppression import should_suppress_alert
 from .alerting import AlertBuilder, alert_to_document
 from .config import EngineConfig, load_config
 from .correlation import CorrelationConfig, CorrelationEngine
@@ -82,6 +83,7 @@ class DetectionRuntime:
             embedding_engine=self.embedding_engine,
             semantic_gate_threshold=config.semantic_gate_threshold,
             log_source_families=config.log_source_families,
+            evidence_policy=config.scoring_policy,
         )
 
         corr_cfg = CorrelationConfig.build(
@@ -93,6 +95,8 @@ class DetectionRuntime:
             decay_half_life_seconds=float(config.correlation.get("decay_half_life_seconds", 120.0)),
             chain_rules=config.correlation_chain_rules,
             network_datacomponents=config.correlation_network_datacomponents,
+            accumulator=str(config.correlation.get("accumulator", "linear")),
+            require_strong_match=bool(config.correlation.get("require_strong_match", False)),
         )
         self.correlation = CorrelationEngine(cfg=corr_cfg)
 
@@ -152,12 +156,22 @@ class DetectionRuntime:
                 continue
 
             top_match = matches[0]
+            if self.config.skip_ambiguous_within_margin and top_match.is_ambiguous and len(matches) > 1:
+                margin = top_match.similarity_score - matches[1].similarity_score
+                if margin < self.config.ambiguous_score_margin:
+                    continue
+
             penalized = top_match.similarity_score
             if event.asset_id.startswith("unknown"):
                 penalized = max(0.0, penalized - self.config.unknown_asset_penalty)
                 top_match.similarity_score = penalized
 
             if top_match.similarity_score < threshold:
+                continue
+
+            if should_suppress_alert(
+                event, top_match.datacomponent_id, self.config.alert_suppression_rules,
+            ):
                 continue
 
             group, boosts = self.correlation.process(top_match)

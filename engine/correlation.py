@@ -36,6 +36,13 @@ class CorrelationConfig:
     decay_half_life_seconds: float = 120.0
     chain_rules: FrozenSet[Tuple[str, str]] = field(default_factory=frozenset)
     network_datacomponents: FrozenSet[str] = field(default_factory=frozenset)
+    # Shape of the per-event accumulator. "linear" multiplies per_event by
+    # n_prior; "log" uses log1p(n_prior) for diminishing returns so long
+    # runs of the same repeated event cannot saturate the final score.
+    accumulator: str = "linear"
+    # When True, matches flagged weak_evidence do not contribute to the
+    # prior-count accumulator and do not receive any correlation boost.
+    require_strong_match: bool = False
 
     @classmethod
     def build(
@@ -49,7 +56,12 @@ class CorrelationConfig:
         decay_half_life_seconds: float = 120.0,
         chain_rules: Optional[Iterable[Tuple[str, str]]] = None,
         network_datacomponents: Optional[Iterable[str]] = None,
+        accumulator: str = "linear",
+        require_strong_match: bool = False,
     ) -> "CorrelationConfig":
+        acc = str(accumulator or "linear").lower()
+        if acc not in {"linear", "log"}:
+            acc = "linear"
         return cls(
             window_seconds=window_seconds,
             repeat_count_escalation=repeat_count_escalation,
@@ -59,6 +71,8 @@ class CorrelationConfig:
             decay_half_life_seconds=decay_half_life_seconds,
             chain_rules=frozenset(tuple(p) for p in (chain_rules or [])),
             network_datacomponents=frozenset(network_datacomponents or []),
+            accumulator=acc,
+            require_strong_match=bool(require_strong_match),
         )
 
 
@@ -89,20 +103,47 @@ class CorrelationEngine:
         group.add_match(match)
         chain_boost = self._maybe_chain_boost(group, match)
 
+        # Weak-evidence matches: group them for context, but never inflate
+        # confidence from repetition. This prevents long runs of single-signal
+        # events (startup banners, flow heartbeats, etc.) from saturating
+        # the aggregate score regardless of their individual quality.
+        if self.cfg.require_strong_match and getattr(match, "weak_evidence", False):
+            group.aggregate_score = max(group.aggregate_score, match.similarity_score)
+            return group, {"correlation_boost": 0.0, "chain_boost": 0.0}
+
         delta_t = (match.event.timestamp - group.last_timestamp).total_seconds()
         delta_t = max(delta_t, 0.0)
         decay = self._temporal_decay(delta_t)
 
+        # Effective prior count: optionally exclude weak matches so that
+        # the accumulator reflects independent corroborating evidence.
+        if self.cfg.require_strong_match:
+            strong_priors = [
+                m for m in group.matches[:-1]
+                if not getattr(m, "weak_evidence", False)
+            ]
+            n_prior_effective = len(strong_priors)
+            dc_counts: Dict[str, int] = {}
+            for m in strong_priors + [match]:
+                dc_counts[m.datacomponent_id] = dc_counts.get(m.datacomponent_id, 0) + 1
+        else:
+            n_prior_effective = max(len(group.matches) - 1, 0)
+            dc_counts = {}
+            for m in group.matches:
+                dc_counts[m.datacomponent_id] = dc_counts.get(m.datacomponent_id, 0) + 1
+
         repeat_boost = 0.0
-        dc_counts: Dict[str, int] = {}
-        for m in group.matches:
-            dc_counts[m.datacomponent_id] = dc_counts.get(m.datacomponent_id, 0) + 1
         max_count = max(dc_counts.values(), default=0)
         if max_count >= self.cfg.repeat_count_escalation:
             repeat_boost = self.cfg.per_event_correlation_boost
 
+        if self.cfg.accumulator == "log":
+            accum = math.log1p(n_prior_effective)
+        else:
+            accum = float(n_prior_effective)
+
         raw_corr_boost = (
-            self.cfg.per_event_correlation_boost * max(len(group.matches) - 1, 0)
+            self.cfg.per_event_correlation_boost * accum
             + repeat_boost
         )
         corr_boost = min(self.cfg.max_correlation_boost, raw_corr_boost) * decay

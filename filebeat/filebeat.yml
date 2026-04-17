@@ -276,6 +276,17 @@ filebeat.inputs:
     fields_under_root: true
 
   - type: filestream
+    id: ews-cron-fim
+    paths: ["/shared_logs/ews/cron_fim.log"]
+    fields:
+      asset_id: "ews"
+      asset_name: "Engineering Workstation"
+      asset_ip: "192.168.95.5"
+      asset_zone: "ics-net"
+      log_type: "cron_fim"
+    fields_under_root: true
+
+  - type: filestream
     id: ews-pacct
     paths: ["/shared_logs/ews/pacct"]
     fields:

@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ════════════════════════════════════════════════════════════════════════════
 # GRFICS ICS DataComponent Detection Stack
 # ════════════════════════════════════════════════════════════════════════════
@@ -91,6 +89,8 @@ services:
       - ./shared_logs/ews/pacct:/var/log/pacct
       # EXPORT: Cron for persistence monitoring
       - ./shared_logs/ews/cron.log:/var/log/cron.log
+      # EXPORT: inotify-based cron path monitoring (when kernel audit is unavailable in Docker)
+      - ./shared_logs/ews/cron_fim.log:/var/log/ics-cron-fim.log
       # EXPORT: Workstation supervisor (noVNC/X11 stack bootstrap — high-signal only)
       - ./shared_logs/ews/supervisord.log:/var/log/supervisord.log
     networks:

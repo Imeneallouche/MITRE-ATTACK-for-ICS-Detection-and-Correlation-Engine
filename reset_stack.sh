@@ -56,14 +56,30 @@ printf '{}\n' > "$ENGINE_CHECKPOINT_FILE"
 log "Re-initializing shared logs"
 run_script "$INIT_SCRIPT"
 
-log "Restarting full stack"
+log "Starting all services except detection-engine"
 if [[ -f "$SCRIPT_DIR/docker-compose.yml" || -f "$SCRIPT_DIR/compose.yml" || -f "$SCRIPT_DIR/compose.yaml" ]]; then
-  docker compose up -d
+  mapfile -t COMPOSE_SERVICES < <(docker compose config --services 2>/dev/null | grep -v '^detection-engine$' || true)
+
+  if ((${#COMPOSE_SERVICES[@]} > 0)); then
+    docker compose up -d "${COMPOSE_SERVICES[@]}"
+  else
+    log "No compose services found, skipping initial bring-up"
+  fi
 else
   log "No compose file found, skipping docker compose up"
 fi
 
 log "Setting up SSH and rsyslog"
 run_script "$SSH_SETUP_SCRIPT"
+
+log "Waiting 60 seconds before starting detection-engine"
+sleep 60
+
+log "Starting detection-engine"
+if [[ -f "$SCRIPT_DIR/docker-compose.yml" || -f "$SCRIPT_DIR/compose.yml" || -f "$SCRIPT_DIR/compose.yaml" ]]; then
+  docker compose up -d detection-engine
+else
+  log "No compose file found, skipping detection-engine start"
+fi
 
 log "Reset complete ✅"

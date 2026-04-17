@@ -58,6 +58,85 @@ class EngineConfig:
     def unknown_asset_penalty(self) -> float:
         return float(self.raw["thresholds"]["unknown_asset_penalty"])
 
+    # ── Alerting policy (optional ambiguity filter; suppression rules) ─────
+    # Suppression rules default empty; RL or external policy can inject rules.
+
+    @property
+    def alerting(self) -> Dict[str, Any]:
+        return self.raw.get("alerting", {}) or {}
+
+    @property
+    def skip_ambiguous_within_margin(self) -> bool:
+        return bool(self.alerting.get("skip_if_ambiguous_within_margin", False))
+
+    @property
+    def ambiguous_score_margin(self) -> float:
+        return float(self.alerting.get("ambiguous_score_margin", 0.05))
+
+    @property
+    def alert_suppression_rules(self) -> List[Dict[str, Any]]:
+        raw = self.raw.get("alert_suppression_rules")
+        if isinstance(raw, list):
+            return raw
+        return []
+
+    # ── Scoring policy (evidence gate, keyword specificity, log-source cap) ─
+    #
+    # Purpose: a *generic*, non-hardcoded safeguard that an alert should not
+    # rest on a single weak signal. The policy is pure math on the signal
+    # vector -- no DC, message, or environment-specific rules -- so it
+    # composes cleanly with any future RL / benign-behaviour model that
+    # wants to further suppress or re-score alerts.
+    #
+    # Keys (all optional, with sensible defaults):
+    #   min_independent_signals:        minimum number of non-zero signal
+    #                                   channels required for full credit
+    #   log_source_counts_as_evidence:  whether to count log-source as a
+    #                                   corroborating channel (False by
+    #                                   default because Logstash enrichment
+    #                                   is usually a routing decision, not
+    #                                   independent evidence)
+    #   weak_evidence_cap:              max composite similarity allowed
+    #                                   when fewer than the minimum signals
+    #                                   are present
+    #   keyword_evidence_threshold:     minimum keyword_match to count the
+    #                                   keyword channel as evidence
+    #   semantic_evidence_threshold:    minimum semantic_match to count the
+    #                                   semantic channel as evidence
+    #                                   (defaults to semantic_gate_threshold)
+    #   min_event_text_length:          minimum trimmed length of log text
+    #                                   for keyword credit
+    #   log_source_max_score:           cap on log-source signal value
+    #                                   (1.0 keeps historical behaviour)
+    #   keyword_min_hits_for_full_credit, keyword_single_hit_credit:
+    #                                   shape of the keyword specificity
+    #                                   curve
+
+    @property
+    def scoring_policy(self) -> Dict[str, Any]:
+        raw = self.raw.get("scoring", {}) or {}
+        if not isinstance(raw, dict):
+            return {}
+        policy = dict(raw.get("evidence_policy") or {})
+        policy.setdefault(
+            "log_source_max_score",
+            float(raw.get("log_source", {}).get("max_score", 1.0))
+            if isinstance(raw.get("log_source"), dict)
+            else 1.0,
+        )
+        kw_cfg = raw.get("keywords") or {}
+        if isinstance(kw_cfg, dict):
+            if "min_hits_for_full_credit" in kw_cfg:
+                policy.setdefault(
+                    "keyword_min_hits_for_full_credit",
+                    int(kw_cfg["min_hits_for_full_credit"]),
+                )
+            if "single_hit_credit" in kw_cfg:
+                policy.setdefault(
+                    "keyword_single_hit_credit", float(kw_cfg["single_hit_credit"]),
+                )
+        return policy
+
     # ── Scoring ────────────────────────────────────────────────────────────
 
     @property

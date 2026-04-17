@@ -74,6 +74,9 @@ class AlertBuilder:
             "graph_available": technique_result.graph_available if technique_result else False,
             "sources_used": sources_used,
             "is_ambiguous": match.is_ambiguous,
+            "evidence_signal_count": match.evidence_signal_count,
+            "evidence_signals": match.evidence.get("evidence_signals", []),
+            "weak_evidence": match.weak_evidence,
         }
 
         if related_matches:

@@ -66,6 +66,11 @@ class CandidateMatch:
     is_ambiguous: bool = False
     semantic_score: float = 0.0
     gate_passed: str = ""
+    # Number of independent corroborating evidence channels (semantic / keyword /
+    # field / category / optionally log-source). Used by correlation to avoid
+    # inflating confidence for long runs of under-supported matches.
+    evidence_signal_count: int = 0
+    weak_evidence: bool = False
 
 
 @dataclass

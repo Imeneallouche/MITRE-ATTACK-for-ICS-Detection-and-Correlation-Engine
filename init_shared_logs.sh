@@ -59,6 +59,7 @@ files=(
   "$BASE/ews/wtmp"
   "$BASE/ews/pacct"
   "$BASE/ews/cron.log"
+  "$BASE/ews/cron_fim.log"
   "$BASE/ews/supervisord.log"
 
   "$BASE/hmi/auth.log"
@@ -75,6 +76,11 @@ files=(
 )
 
 for f in "${files[@]}"; do
+  # Docker bind-mounts a missing host path as a directory; `touch` on a directory
+  # does not replace it with a file — rsyslog then sees /var/log/syslog as a dir and fails.
+  if [[ -d "$f" ]]; then
+    rm -rf "$f"
+  fi
   touch "$f"
 done
 

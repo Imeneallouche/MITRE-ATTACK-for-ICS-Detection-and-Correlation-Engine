@@ -1,4 +1,4 @@
-"""DataComponent matcher with 2-tier gate and semantic similarity scoring.
+"""DataComponent matcher with 2-tier gate, composite scoring, and evidence gate.
 
 Tier 1 -- Candidate Gate
     For each DC, check whether the event passes either:
@@ -12,11 +12,24 @@ Tier 1 -- Candidate Gate
 Tier 2 -- Composite Scoring
     Uses ScoringEngine to compute a weighted combination of five signals:
     S_sem, S_ls, S_kw, S_fld, S_cat.
+
+Tier 3 -- Evidence Gate (generic, non-hardcoded)
+    The matcher counts the number of *independent* evidence channels that
+    contributed substantively to the composite. "Channel" is one of:
+    semantic ≥ gate, keyword ≥ threshold, field > 0, category > 0, and
+    optionally the log-source signal if operator policy treats routing
+    hints as evidence. If fewer than ``min_independent_signals`` channels
+    fired, the composite is capped at ``weak_evidence_cap`` and the match
+    is tagged ``weak_evidence=True`` so downstream stages (correlation,
+    alerting, RL policy) can treat it conservatively.
+
+    This encodes a single principle that is not tied to any DC, message,
+    or deployment: *an alert should not rest on a single weak signal*.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -26,7 +39,7 @@ from .scorer import ScoringEngine
 
 
 class DataComponentMatcher:
-    """Matches normalised events against DC profiles using 2-tier scoring."""
+    """Matches normalised events against DC profiles using 3-tier scoring."""
 
     def __init__(
         self,
@@ -37,6 +50,7 @@ class DataComponentMatcher:
         embedding_engine: Optional[EmbeddingEngine] = None,
         semantic_gate_threshold: float = 0.25,
         log_source_families: Optional[Dict[str, str]] = None,
+        evidence_policy: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.profiles = list(profiles)
         self._profile_by_id = {p.id: p for p in self.profiles}
@@ -45,10 +59,32 @@ class DataComponentMatcher:
         self.semantic_gate_threshold = semantic_gate_threshold
         self.embedding_engine = embedding_engine
 
+        policy = dict(evidence_policy or {})
+        self.min_independent_signals = int(policy.get("min_independent_signals", 1))
+        self.log_source_counts_as_evidence = bool(
+            policy.get("log_source_counts_as_evidence", True)
+        )
+        self.weak_evidence_cap = float(policy.get("weak_evidence_cap", 1.0))
+        self.keyword_evidence_threshold = float(
+            policy.get("keyword_evidence_threshold", 0.0)
+        )
+        self.semantic_evidence_threshold = float(
+            policy.get("semantic_evidence_threshold", max(semantic_gate_threshold, 0.0))
+        )
+        self.min_event_text_length = int(policy.get("min_event_text_length", 0))
+
         self.scorer = ScoringEngine(
             weights=scoring_weights,
             embedding_engine=embedding_engine,
             log_source_families=log_source_families,
+            log_source_max_score=float(policy.get("log_source_max_score", 1.0)),
+            keyword_min_hits_for_full_credit=int(
+                policy.get("keyword_min_hits_for_full_credit", 3)
+            ),
+            keyword_single_hit_credit=float(
+                policy.get("keyword_single_hit_credit", 0.25)
+            ),
+            min_event_text_length=self.min_event_text_length,
         )
 
     def match_event(self, event: NormalizedEvent) -> List[CandidateMatch]:
@@ -161,6 +197,18 @@ class DataComponentMatcher:
         }
         similarity = self.scorer.compute_composite(signal_scores)
 
+        evidence_count, evidence_flags = self._count_evidence_signals(
+            sem_score=sem_score,
+            ls_score=ls_score,
+            kw_score=kw_score,
+            fld_score=fld_score,
+            cat_score=cat_score,
+        )
+
+        weak_evidence = evidence_count < self.min_independent_signals
+        if weak_evidence and self.weak_evidence_cap < 1.0:
+            similarity = round(min(similarity, self.weak_evidence_cap), 4)
+
         confidence_tier = "low"
         if similarity >= self.high_confidence_threshold:
             confidence_tier = "high"
@@ -173,7 +221,11 @@ class DataComponentMatcher:
             "matched_fields": fld_hits,
             "matched_categories": cat_hits,
             "semantic_similarity": round(sem_score, 4),
+            "evidence_signals": evidence_flags,
+            "evidence_signal_count": evidence_count,
         }
+        if weak_evidence:
+            evidence["weak_evidence"] = True
 
         return CandidateMatch(
             match_id=str(uuid.uuid4()),
@@ -186,4 +238,35 @@ class DataComponentMatcher:
             event=event,
             semantic_score=sem_score,
             gate_passed=gate_reason,
+            evidence_signal_count=evidence_count,
+            weak_evidence=weak_evidence,
         )
+
+    def _count_evidence_signals(
+        self,
+        *,
+        sem_score: float,
+        ls_score: float,
+        kw_score: float,
+        fld_score: float,
+        cat_score: float,
+    ) -> Tuple[int, List[str]]:
+        """Count independent evidence channels for a match.
+
+        A channel is considered to have contributed only if it exceeds a
+        minimum threshold. Log-source is conditionally counted because,
+        for many pipelines, log-source assignment is a routing decision
+        (via Logstash enrichment) and not independent corroboration.
+        """
+        flags: List[str] = []
+        if sem_score >= self.semantic_evidence_threshold and sem_score > 0:
+            flags.append("semantic")
+        if kw_score > self.keyword_evidence_threshold:
+            flags.append("keyword")
+        if fld_score > 0:
+            flags.append("field")
+        if cat_score > 0:
+            flags.append("category")
+        if self.log_source_counts_as_evidence and ls_score > 0:
+            flags.append("log_source")
+        return len(flags), flags
