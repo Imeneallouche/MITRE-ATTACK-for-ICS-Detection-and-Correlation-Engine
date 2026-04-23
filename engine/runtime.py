@@ -11,10 +11,11 @@ import argparse
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .alert_suppression import should_suppress_alert
 from .alerting import AlertBuilder, alert_to_document
@@ -23,11 +24,13 @@ from .correlation import CorrelationConfig, CorrelationEngine
 from .dc_loader import load_assets, load_datacomponents
 from .embeddings import EmbeddingEngine
 from .es_client import Checkpoint, CheckpointStore, ESClient
-from .feature_extractor import EventNormalizer, NormalizationRules
+from .feature_extractor import EventNormalizer, NormalizationRules, parse_timestamp
 from .matcher import DataComponentMatcher
 from .neo4j_client import Neo4jClient
 from .technique_mapper import TechniqueMapper
 from .templates import alert_index_template, correlation_index_template
+from .models import NormalizedEvent
+from .threat_context_rules import max_score_boost_for_rules
 
 LOG = logging.getLogger("ics-detector")
 
@@ -42,6 +45,13 @@ class DedupCache:
 
     def add(self, key: str, ts: datetime) -> None:
         self._data[key] = ts
+        if len(self._data) > self.max_size:
+            for old in sorted(self._data, key=lambda k: self._data[k])[: self.max_size // 10]:
+                del self._data[old]
+
+    def add_all(self, keys: List[str], ts: datetime) -> None:
+        for key in keys:
+            self._data[key] = ts
         if len(self._data) > self.max_size:
             for old in sorted(self._data, key=lambda k: self._data[k])[: self.max_size // 10]:
                 del self._data[old]
@@ -71,9 +81,11 @@ class DetectionRuntime:
                 model_name=config.embedding_model,
                 device=config.embedding_device,
                 enabled=True,
+                encode_batch_size=config.embedding_encode_batch_size,
             )
             dc_texts = {p.id: p.embedding_text for p in self.profiles if p.embedding_text}
             self.embedding_engine.precompute_dc_embeddings(dc_texts)
+            self.embedding_engine.precompute_log_source_line_embeddings(self.profiles)
 
         self.matcher = DataComponentMatcher(
             profiles=self.profiles,
@@ -118,10 +130,32 @@ class DetectionRuntime:
             asset_role_map=config.technique_asset_role_map,
         )
 
+        eng = config.raw.get("engine", {}) or {}
+        self.dedup_logical_fingerprint: bool = bool(eng.get("dedup_logical_fingerprint", True))
+        self.idempotent_alert_ids: bool = bool(eng.get("idempotent_alert_ids", True))
+        alerting_cfg = (config.raw.get("alerting") or {}) if isinstance(config.raw, dict) else {}
+        rate_cfg = (alerting_cfg.get("per_asset_dc_rate_limit") or {})
         self.alert_builder = AlertBuilder(
             technique_mapper=self.technique_mapper,
-            suppress_window_seconds=int(config.raw["engine"]["suppress_window_seconds"]),
+            suppress_window_seconds=int(eng.get("suppress_window_seconds", 60)),
+            idempotent_alert_ids=self.idempotent_alert_ids,
+            per_asset_dc_rate_window_seconds=int(rate_cfg.get("window_seconds", 0) or 0),
+            per_asset_dc_rate_max_alerts=int(rate_cfg.get("max_alerts", 0) or 0),
         )
+
+        # ``correlation_entry_threshold`` lets sub-threshold matches feed the
+        # correlation engine so multi-stage attack chains can accumulate
+        # evidence above ``alert_threshold``.  Defaults to ``alert_threshold``
+        # (strict-hard-gate legacy behaviour).
+        thresholds_raw = (config.raw.get("thresholds") or {}) if isinstance(config.raw, dict) else {}
+        try:
+            self.correlation_entry_threshold: float = float(
+                thresholds_raw.get("correlation_entry_threshold", config.alert_threshold),
+            )
+        except (TypeError, ValueError):
+            self.correlation_entry_threshold = float(config.alert_threshold)
+        if self.correlation_entry_threshold > config.alert_threshold:
+            self.correlation_entry_threshold = float(config.alert_threshold)
 
         self.checkpoints = CheckpointStore(config.checkpoint_file)
         self.dedup = DedupCache(max_size=int(config.raw["engine"]["dedup_cache_size"]))
@@ -133,25 +167,66 @@ class DetectionRuntime:
     def warm_graph_cache(self) -> None:
         self.neo4j.warm_cache()
 
+    def _threat_context_score_boost(self, event: NormalizedEvent, datacomponent_id: str) -> float:
+        """Additive score from ``threat_context.score_boost_rules`` in detection.yml (fully data-driven)."""
+        cfg = self.config.threat_context
+        if not cfg or not cfg.get("enabled", True):
+            return 0.0
+        rules = cfg.get("score_boost_rules") or []
+        if not rules:
+            return 0.0
+        return max_score_boost_for_rules(
+            event,
+            datacomponent_id,
+            rules,
+            self.assets_by_ip,
+        )
+
     def process_hits(self, hits: List[Dict[str, Any]], threshold: Optional[float] = None) -> int:
         alert_count = 0
         threshold = self.config.alert_threshold if threshold is None else threshold
 
+        work: List[Tuple[Dict[str, Any], NormalizedEvent]] = []
         for hit in hits:
-            source = hit.get("_source", {})
-            dedup_key = self._dedup_key(hit)
-            event_ts = _safe_datetime(source.get("@timestamp"))
-
-            if self.dedup.seen(dedup_key):
+            source = hit.get("_source", {}) or {}
+            event_ts = _event_time(source.get("@timestamp"))
+            dedup_keys = self._dedup_keys(hit, source)
+            if any(self.dedup.seen(k) for k in dedup_keys):
                 continue
-            self.dedup.add(dedup_key, event_ts)
+            self.dedup.add_all(dedup_keys, event_ts)
 
             event = self.normalizer.normalize(hit)
 
             if event.asset_id in self.excluded_asset_ids:
                 continue
 
-            matches = self.matcher.match_event(event)
+            work.append((hit, event))
+
+        substantive: List[bool] = [
+            self.matcher.passes_substantive_message_policy(e)
+            and self.matcher.passes_numeric_field_floor_policy(e)
+            for _, e in work
+        ]
+        texts_to_embed = [
+            work[i][1].embedding_text
+            for i, ok in enumerate(substantive)
+            if ok
+        ]
+        batch_embeddings: Optional[List[Any]] = None
+        if (
+            texts_to_embed
+            and self.embedding_engine is not None
+            and self.embedding_engine.available
+        ):
+            batch_embeddings = self.embedding_engine.embed_texts(texts_to_embed)
+
+        emb_iter = 0
+        for i, (_, event) in enumerate(work):
+            log_emb = None
+            if batch_embeddings is not None and substantive[i]:
+                log_emb = batch_embeddings[emb_iter]
+                emb_iter += 1
+            matches = self.matcher.match_event(event, log_embedding=log_emb)
             if not matches:
                 continue
 
@@ -166,7 +241,12 @@ class DetectionRuntime:
                 penalized = max(0.0, penalized - self.config.unknown_asset_penalty)
                 top_match.similarity_score = penalized
 
-            if top_match.similarity_score < threshold:
+            boost = self._threat_context_score_boost(event, top_match.datacomponent_id)
+            if boost > 0.0:
+                top_match.similarity_score = min(1.0, top_match.similarity_score + boost)
+
+            entry_threshold = min(self.correlation_entry_threshold, threshold)
+            if top_match.similarity_score < entry_threshold:
                 continue
 
             if should_suppress_alert(
@@ -175,6 +255,14 @@ class DetectionRuntime:
                 continue
 
             group, boosts = self.correlation.process(top_match)
+
+            # Post-correlation gate: the individual match may be sub-threshold
+            # but correlation boost (chain progression, repeat events across
+            # the same asset) may lift the aggregate over ``threshold``. We
+            # alert on the corroborated signal, not the isolated score.
+            aggregate_score = float(group.aggregate_score)
+            if top_match.similarity_score < threshold and aggregate_score < threshold:
+                continue
 
             alert = self.alert_builder.build_alert(
                 match=top_match,
@@ -221,7 +309,7 @@ class DetectionRuntime:
 
     def run_backtest(self, start: str, end: str) -> int:
         LOG.info("Starting backtest from %s to %s", start, end)
-        pit = self.es.open_pit(self.config.es_source_index_pattern, keep_alive="2m")
+        pit = self.es.open_pit(self.config.es_source_index_pattern, keep_alive="15m")
         total_alerts = 0
         search_after = None
         try:
@@ -236,7 +324,7 @@ class DetectionRuntime:
                 body: Dict[str, Any] = {
                     "size": self.config.batch_size,
                     "sort": [{"@timestamp": "asc"}, {"_id": "asc"}],
-                    "pit": {"id": pit, "keep_alive": "2m"},
+                    "pit": {"id": pit, "keep_alive": "15m"},
                     "query": {"bool": bool_query},
                 }
                 if search_after:
@@ -252,7 +340,9 @@ class DetectionRuntime:
         return total_alerts
 
     def _poll_and_process(self, checkpoint: Checkpoint) -> int:
-        pit = self.es.open_pit(self.config.es_source_index_pattern, keep_alive="1m")
+        # PIT must stay valid across process_hits() between searches; short keep_alive
+        # causes 404 "No search context" and prevents checkpoint advance / alert indexing.
+        pit = self.es.open_pit(self.config.es_source_index_pattern, keep_alive="15m")
         last_sort = checkpoint.last_sort
         total_alerts = 0
         newest_timestamp = checkpoint.last_timestamp
@@ -265,6 +355,7 @@ class DetectionRuntime:
                     pit_id=pit,
                     search_after=last_sort,
                     excluded_asset_ids=sorted(self.excluded_asset_ids),
+                    pit_keep_alive="15m",
                 )
                 hits = result.get("hits", {}).get("hits", [])
                 if not hits:
@@ -282,27 +373,57 @@ class DetectionRuntime:
         self.checkpoints.save(checkpoint)
         return total_alerts
 
-    def _dedup_key(self, hit: Dict[str, Any]) -> str:
-        src = hit.get("_source", {})
-        raw = "|".join([
-            str(src.get("asset_id", "")),
-            str(src.get("log_source_normalized", "")),
-            str(src.get("@timestamp", ""))[:19],
-            str(src.get("log_message", src.get("message", ""))),
-        ])
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    def _dedup_keys(self, hit: Dict[str, Any], source: Dict[str, Any]) -> List[str]:
+        """Return cache keys for this ES hit.  Always include a per-document key;
+        optionally include a second-level logical fingerprint to collapse
+        re-ingest copies that differ only by ``_id``."""
+        index = str(hit.get("_index") or "")
+        doc_id = str(hit.get("_id") or "")
+        keys: List[str] = [f"esdoc|{index}|{doc_id}"]
+
+        if not self.dedup_logical_fingerprint:
+            return keys
+
+        asset = str(_coerce_first(source.get("asset_id")) or "")
+        lsrc = str(
+            _coerce_first(source.get("log_source_normalized"))
+            or _coerce_first(source.get("log_type"))
+            or "",
+        )
+        if source.get("log_message") not in (None, "", []):
+            body_raw: Any = source.get("log_message")
+        else:
+            body_raw = source.get("message")
+        body = _normalize_dedup_message(body_raw)
+        t = _event_time(source.get("@timestamp"))
+        t_utc = t.astimezone(timezone.utc).replace(microsecond=0)
+        bucket = t_utc.isoformat().replace("+00:00", "Z")
+        raw = f"logicalv1|{asset}|{lsrc}|{bucket}|{body}"
+        keys.append("logfp:" + hashlib.sha256(raw.encode("utf-8")).hexdigest())
+        return keys
 
     def shutdown(self) -> None:
         self.neo4j.close()
 
 
-def _safe_datetime(value: Any) -> datetime:
-    try:
-        if isinstance(value, str):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        pass
-    return datetime.now(tz=timezone.utc)
+def _coerce_first(val: Any) -> Any:
+    if isinstance(val, list) and val:
+        return _coerce_first(val[0])
+    return val
+
+
+def _normalize_dedup_message(val: Any) -> str:
+    s = str(_coerce_first(val) or "").strip()
+    if not s:
+        return ""
+    return re.sub(r"\s+", " ", s)
+
+
+def _event_time(value: Any) -> datetime:
+    v = _coerce_first(value)
+    if v is None or v == "":
+        return datetime.now(tz=timezone.utc)
+    return parse_timestamp(v)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

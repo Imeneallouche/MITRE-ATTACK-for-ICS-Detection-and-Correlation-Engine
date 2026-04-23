@@ -50,7 +50,9 @@
             "nsg flow logs",
             "sysmon event 3",
             "auditctl",
-            "connect syscall"
+            "connect syscall",
+            "network flow",
+            "session metadata"
         ]
     },
     "collection_measures": {

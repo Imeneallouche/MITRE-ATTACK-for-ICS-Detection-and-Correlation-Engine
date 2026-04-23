@@ -22,6 +22,10 @@
         "log_message": { "type": "text" },
         "rule_or_pattern": { "type": "keyword" },
         "detection_id": { "type": "keyword" },
+        "observed_log_source": { "type": "keyword" },
+        "triggering_log": { "type": "text" },
+        "datacomponent_log_source_name": { "type": "keyword" },
+        "datacomponent_log_source_channel": { "type": "text" },
         "detection_metadata": { "type": "object", "dynamic": true }
       }
     }

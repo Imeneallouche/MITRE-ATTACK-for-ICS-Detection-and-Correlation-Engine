@@ -4,7 +4,10 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VOLUME_NAME="mitre-attack-for-ics-detection-and-correlation-engine_elasticsearch_data"
+# Docker Compose prefixes named volumes with the project name (directory name, lowercased).
+COMPOSE_PROJECT="$(basename "$SCRIPT_DIR" | tr '[:upper:]' '[:lower:]')"
+ELASTICSEARCH_VOLUME="${COMPOSE_PROJECT}_elasticsearch_data"
+PLC_VOLUME="${COMPOSE_PROJECT}_plc_volume"
 SHARED_LOGS_DIR="$SCRIPT_DIR/shared_logs"
 INIT_SCRIPT="$SCRIPT_DIR/init_shared_logs.sh"
 SSH_SETUP_SCRIPT="$SCRIPT_DIR/setup_ssh_rsyslog.sh"
@@ -36,10 +39,17 @@ else
 fi
 
 log "Removing Elasticsearch volume if it exists"
-if docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
-  docker volume rm "$VOLUME_NAME"
+if docker volume inspect "$ELASTICSEARCH_VOLUME" >/dev/null 2>&1; then
+  docker volume rm "$ELASTICSEARCH_VOLUME"
 else
-  log "Volume not found, skipping: $VOLUME_NAME"
+  log "Volume not found, skipping: $ELASTICSEARCH_VOLUME"
+fi
+
+log "Removing PLC OpenPLC volume if it exists (restores default programs; fixes missing st_files/*.st after attack chains)"
+if docker volume inspect "$PLC_VOLUME" >/dev/null 2>&1; then
+  docker volume rm "$PLC_VOLUME"
+else
+  log "Volume not found, skipping: $PLC_VOLUME"
 fi
 
 log "Deleting shared logs if the directory exists"
@@ -71,6 +81,8 @@ fi
 
 log "Setting up SSH and rsyslog"
 run_script "$SSH_SETUP_SCRIPT"
+
+
 
 log "Waiting 60 seconds before starting detection-engine"
 sleep 60

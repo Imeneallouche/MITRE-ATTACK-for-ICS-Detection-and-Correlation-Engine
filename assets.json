@@ -1,4 +1,5 @@
 {
+  "_documentation": "Inventory for enrichment and threat_context (detection.yml). Any host with is_ics_asset false is treated as a known non-ICS source for DMZ-to-ICS Modbus boost. Add alternate attacker lab IPs the same way as kali.",
   "assets": [
     {
       "asset_id": "simulation",

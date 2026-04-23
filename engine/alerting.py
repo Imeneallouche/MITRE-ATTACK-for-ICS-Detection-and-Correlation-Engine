@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from .models import (
@@ -34,8 +34,19 @@ class AlertBuilder:
         technique_mapper: Optional[TechniqueMapper] = None,
         *,
         suppress_window_seconds: int = 60,
+        idempotent_alert_ids: bool = True,
+        per_asset_dc_rate_window_seconds: int = 0,
+        per_asset_dc_rate_max_alerts: int = 0,
     ) -> None:
         self.suppress_window_seconds = suppress_window_seconds
+        self.idempotent_alert_ids = idempotent_alert_ids
+        # Second-level rate limit per ``(asset_id, datacomponent_id)`` — blocks
+        # bursts of *differently-worded* alerts (e.g. process-alarm rows whose
+        # numeric fields drift each cycle, keeping the message fingerprint
+        # unique).  ``0`` disables (legacy behaviour).
+        self.per_asset_dc_rate_window_seconds = max(0, int(per_asset_dc_rate_window_seconds))
+        self.per_asset_dc_rate_max_alerts = max(0, int(per_asset_dc_rate_max_alerts))
+        self._rate_limit_history: Dict[str, List[datetime]] = {}
         self._recent_keys: Dict[str, datetime] = {}
         self._technique_mapper = technique_mapper
 
@@ -52,6 +63,8 @@ class AlertBuilder:
     ) -> Optional[DetectionAlert]:
         suppression_key = self._suppression_key(match)
         if self._is_suppressed(suppression_key, match.event.timestamp):
+            return None
+        if self._is_rate_limited(match):
             return None
 
         technique_result = self._map_technique(match)
@@ -92,6 +105,14 @@ class AlertBuilder:
         matched_channel = ""
         sem_detail = match.evidence.get("semantic_similarity", 0.0)
         ls_ev = str(match.evidence.get("matched_log_source", "") or "")
+        line_match = match.evidence.get("line_match") or {}
+        catalog_align = match.evidence.get("catalog_alignment") or {}
+        dc_ls_name = str(line_match.get("datacomponent_log_source_name", "") or "") or str(
+            catalog_align.get("datacomponent_log_source_name", "") or "",
+        )
+        dc_ls_ch = str(line_match.get("datacomponent_log_source_channel", "") or "") or str(
+            catalog_align.get("datacomponent_log_source_channel", "") or "",
+        )
         if match.gate_passed.startswith("logstash"):
             matched_channel = (
                 f"dc={match.datacomponent_id} ({match.datacomponent_name}); "
@@ -101,18 +122,52 @@ class AlertBuilder:
             matched_channel = f"semantic_cosine:{sem_detail:.4f}; {ls_ev}".strip()
         elif ls_ev:
             matched_channel = ls_ev
+        if dc_ls_name or dc_ls_ch:
+            ch_snip = dc_ls_ch[:200] + ("…" if len(dc_ls_ch) > 200 else "")
+            extra = f"dc_catalog_name={dc_ls_name!r}; dc_catalog_channel={ch_snip!r}"
+            matched_channel = f"{matched_channel}; {extra}" if matched_channel else extra
+
+        emb = (match.event.embedding_text or "").strip()
+        orig = (match.event.original_log_message or "").strip()
+        trig = orig or (match.event.log_message or "").strip() or emb
+        similarity_evidence: Dict[str, Any] = {
+            "signal_scores": dict(match.signal_scores),
+            "semantic_similarity": match.evidence.get("semantic_similarity"),
+            "gate_passed": match.gate_passed,
+            "matched_log_source_evidence": match.evidence.get("matched_log_source"),
+            "line_match": line_match or None,
+            "catalog_alignment": catalog_align or None,
+            "composite_similarity": match.similarity_score,
+            "embedding_text_preview": emb[:2048] + ("…" if len(emb) > 2048 else ""),
+            "indexed_log_message": orig,
+        }
+        sk = match.evidence.get("soft_semantic_keyword_cap")
+        if sk:
+            similarity_evidence["soft_semantic_keyword_cap"] = sk
+            metadata["soft_semantic_keyword_cap"] = sk
 
         metadata["triggering_event"] = {
-            "log_message": match.event.log_message,
+            "log_message": trig,
             "log_type": match.event.log_type,
             "log_source_normalized": match.event.log_source_normalized,
+            "embedding_text_preview": similarity_evidence.get("embedding_text_preview"),
             "datacomponent_id": match.datacomponent_id,
             "datacomponent_name": match.datacomponent_name,
+            "datacomponent_log_source_name": dc_ls_name,
+            "datacomponent_log_source_channel": dc_ls_ch,
             "gate_reason": match.gate_passed,
         }
+        if self.idempotent_alert_ids:
+            raw_id = (
+                f"ics-alert-v1|{match.event.es_index}|{match.event.document_id}|"
+                f"{match.datacomponent_id}"
+            )
+            stable = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()
+        else:
+            stable = str(uuid.uuid4())
 
         alert = DetectionAlert(
-            detection_id=str(uuid.uuid4()),
+            detection_id=stable,
             timestamp=match.event.timestamp.isoformat(),
             datacomponent=match.datacomponent_name,
             datacomponent_id=match.datacomponent_id,
@@ -123,8 +178,13 @@ class AlertBuilder:
             is_ics_asset=match.event.is_ics_asset,
             es_index=match.event.es_index,
             document_id=match.event.document_id,
-            log_message=match.event.log_message,
-            evidence_snippet=_snippet(match.event.log_message),
+            log_message=trig,
+            evidence_snippet=_snippet(trig),
+            triggering_log=trig,
+            observed_log_source=str(match.event.log_source_normalized or ""),
+            datacomponent_log_source_name=dc_ls_name,
+            datacomponent_log_source_channel=dc_ls_ch,
+            similarity_evidence=similarity_evidence,
             similarity_score=round(final_score, 4),
             confidence_tier=match.confidence_tier,
             signal_scores=match.signal_scores,
@@ -207,6 +267,29 @@ class AlertBuilder:
             return False
         delta = (ts - prev).total_seconds()
         return delta < self.suppress_window_seconds
+
+    def _is_rate_limited(self, match: CandidateMatch) -> bool:
+        """Return True when ``(asset_id, datacomponent_id)`` exceeded its quota.
+
+        Uses a simple sliding window so that bursts of same-DC alerts (e.g. a
+        storm of process-alarm rows after a simulation pushes a tank into an
+        unstable range) collapse into at most ``max_alerts`` rows per
+        ``window_seconds`` without naming the DC or message.  The limiter is
+        purely alert-side: correlation still sees every underlying event.
+        """
+        if self.per_asset_dc_rate_max_alerts <= 0 or self.per_asset_dc_rate_window_seconds <= 0:
+            return False
+        key = f"{match.event.asset_id}|{match.datacomponent_id}"
+        now = match.event.timestamp
+        window = timedelta(seconds=self.per_asset_dc_rate_window_seconds)
+        history = self._rate_limit_history.get(key, [])
+        history = [t for t in history if now - t <= window]
+        if len(history) >= self.per_asset_dc_rate_max_alerts:
+            self._rate_limit_history[key] = history
+            return True
+        history.append(now)
+        self._rate_limit_history[key] = history
+        return False
 
 
 def alert_to_document(alert: DetectionAlert) -> Dict[str, Any]:

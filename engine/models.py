@@ -45,6 +45,8 @@ class NormalizedEvent:
     log_message: str
     fields: Dict[str, Any]
     raw_source: Dict[str, Any]
+    # Raw ``message`` / ``log_message`` from the indexed document (before synthesis).
+    original_log_message: str = ""
     is_ics_asset: bool = False
     asset_role: str = ""
     categories: List[str] = field(default_factory=list)
@@ -111,6 +113,8 @@ class CorrelationGroup:
 
 @dataclass
 class DetectionAlert:
+    """Emitted alert: includes the triggering log, catalog log-source line match, and similarity evidence."""
+
     detection_id: str
     timestamp: str
     datacomponent: str
@@ -124,6 +128,12 @@ class DetectionAlert:
     document_id: str
     log_message: str
     evidence_snippet: str
+    triggering_log: str
+    # Observed pipeline log source (e.g. NSM:Flow); distinct from catalog Name/Channel.
+    observed_log_source: str
+    datacomponent_log_source_name: str
+    datacomponent_log_source_channel: str
+    similarity_evidence: Dict[str, Any]
 
     similarity_score: float
     confidence_tier: str

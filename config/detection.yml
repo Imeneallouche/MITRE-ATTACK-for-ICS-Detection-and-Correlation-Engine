@@ -1,8 +1,17 @@
 engine:
-  polling_interval_seconds: 5
+  # Lower interval reduces worst-case delay before the next poll (trades a little ES load).
+  polling_interval_seconds: 2
   batch_size: 500
   checkpoint_file: "./state/engine_checkpoint.json"
   dedup_cache_size: 50000
+  # Second-level fingerprint of (asset, log source, @timestamp, message) so
+  # re-ingest / pipeline copies that get different _id but the same line do
+  # not each emit a separate alert.  Disable for strict "every ES doc" semantics.
+  dedup_logical_fingerprint: true
+  # Use deterministic ics-alerts document ids from (es_index, source _id, DC
+  # id) so replays, restarts, and re-indexing update the same row instead of
+  # cluttering the index.  (Technique/KG text may still refresh in-place.)
+  idempotent_alert_ids: true
   late_event_seconds: 600
   suppress_window_seconds: 30
   excluded_asset_ids: []
@@ -12,16 +21,47 @@ engine:
 # learning is deferred to an external policy (e.g. the forthcoming RL agent),
 # which can inject rules dynamically without touching the engine source.
 alerting:
+  # With multiple NSM-family DCs sharing ``log_sources`` and catalog vocabulary,
+  # baseline flow rows can land tied within ~0.03 — suppress those close
+  # tie-breakers to avoid spraying alerts across near-duplicate DCs.
   skip_if_ambiguous_within_margin: true
-  ambiguous_score_margin: 0.05
+  ambiguous_score_margin: 0.03
+  # Per-(asset_id, datacomponent_id) alert-side rate limit.  The existing
+  # message-fingerprint suppression only catches *identical* lines within its
+  # window; when the underlying log source emits a stream of near-duplicates
+  # whose numeric fields drift each cycle (e.g. a tripped analog alarm whose
+  # ``pressure_kpa`` wobbles), the fingerprint changes every tick and the
+  # same DC can alert continuously.  This limiter collapses that burst.
+  per_asset_dc_rate_limit:
+    window_seconds: 300   # 5 minutes
+    max_alerts: 3         # at most 3 alerts per asset+DC within the window
 alert_suppression_rules: []
 
 # ── Scoring thresholds ──────────────────────────────────────────────────
 thresholds:
+  # Require meaningful content signal to alert.  Baseline NSM flow events top
+  # out at ~0.50.  Application-log baselines (Tomcat/ScadaLTS deploy lines) sit
+  # in a ~0.52--0.58 band when keywords + medium semantic align; the
+  # ``semantic_soft_ceiling`` + keyword cap in ``evidence_policy`` pushes those
+  # below threshold while stronger-alignment attack rows keep >= 0.58.
   candidate_threshold: 0.30
-  alert_threshold: 0.55
-  high_confidence_threshold: 0.80
+  alert_threshold: 0.57
+  high_confidence_threshold: 0.82
   unknown_asset_penalty: 0.05
+  # ``correlation_entry_threshold`` is the *minimum individual match score*
+  # required to enter the correlation engine.  Sub-threshold matches (in the
+  # 0.48–0.57 band typical of a single attack step) can still feed into a
+  # correlation group; if the accumulated boost from chained / repeated
+  # events lifts the aggregate above ``alert_threshold``, the runtime emits
+  # an alert.  Set equal to ``alert_threshold`` for the legacy hard-gate
+  # behaviour (no sub-threshold participation).
+  # Attack-chain single steps (e.g. a stealth PLC ``/start_plc`` POST, a
+  # ScadaLTS j_spring login, or a modbus write flow) can land in the
+  # 0.40–0.53 band; let them feed the correlation engine so *diverse* DC
+  # evidence across the chain can lift the aggregate over ``alert_threshold``.
+  # Diversity-driven accumulation in correlation.py prevents same-DC repeats
+  # from exploiting the lower gate (a stream of one DC can never boost).
+  correlation_entry_threshold: 0.40
 
 # ── Scoring policy ──────────────────────────────────────────────────────
 # Generic, non-hardcoded safeguards against single-signal alerts. Tunes
@@ -29,6 +69,12 @@ thresholds:
 # environment-specific rules live here.
 scoring:
   evidence_policy:
+    # Flow / stats rows often lack ``message``; do not score them as attack evidence.
+    require_substantive_original_message: true
+    min_original_log_message_chars: 12
+    # Drop events whose stored message still contains unresolved sprintf tokens (ingestion bug).
+    reject_original_message_patterns:
+      - "%\\{[^}]+\\}"
     # An alert must rest on at least this many independent evidence
     # channels (from {semantic, keyword, field, category, log_source}).
     min_independent_signals: 2
@@ -36,31 +82,55 @@ scoring:
     # not independent corroboration. Set to true only if your pipeline
     # derives log_source from structured content checks.
     log_source_counts_as_evidence: false
-    # Hard cap on composite similarity when evidence is too thin. Acts as
-    # a soft rejection: under-supported matches can still surface in
-    # candidate lists but will not cross the alert threshold by themselves.
-    weak_evidence_cap: 0.50
+    # Require a content signal (narrative similarity OR keyword coverage) to
+    # lift the composite above ``weak_evidence_cap``.  Matches driven purely
+    # by routing / field / category metadata are marked weak and capped so
+    # baseline NSM traffic cannot alert on its own.
+    require_content_signal: true
+    content_signal_names: ["semantic", "keyword"]
+    # Hard cap when evidence is thin — must stay below ``alert_threshold`` so
+    # a weak match can never alert regardless of weighted sum.
+    weak_evidence_cap: 0.48
     # Channel thresholds for "did this signal contribute".
-    keyword_evidence_threshold: 0.10
+    # A single generic vendor token (e.g. "suricata") scores ~0.15; require
+    # 2+ relevant hits or a DC-specific single-hit DC for credit.
+    keyword_evidence_threshold: 0.20
+    # Ambient cosine against bge-small is ~0.30; require clear elevation
+    # above the noise floor before counting semantic as evidence.
+    semantic_evidence_threshold: 0.38
+    # When semantic cosine is below this value (weak "related" but not strong
+    # alignment), cap the keyword channel (see ``keyword_max_score_when_semantic_soft``)
+    # so generic multi-token vendor vocabulary cannot lift Application Log-style
+    # DCs over ``alert_threshold`` without stronger narrative match.  Set to 0
+    # to disable.
+    semantic_soft_ceiling: 0.62
+    keyword_max_score_when_semantic_soft: 0.38
     # Ignore keyword credit on empty/short events (e.g. flow records).
-    min_event_text_length: 8
+    min_event_text_length: 12
+    # Structured process/alarm events: if ``severity`` is present, treat values
+    # below the floor as informational (e.g. bootstrap/heartbeat) and skip DC
+    # matching — suppresses FPs on ``severity: 0`` without message patterns.
+    numeric_field_floors:
+      severity: 1.0
   keywords:
-    # Require multiple keyword hits for full credit; a single generic
-    # vendor token (e.g. a product name) contributes only single_hit_credit.
+    # Require multiple *anchored* keyword hits for full credit. Bodies only
+    # (scorer.py).  Three hits full-credit reduces two-token generic webserver
+    # lines (catalina+tomcat+apache) while still allowing strong two-token
+    # attack strings via semantic + log-source corroboration.
     min_hits_for_full_credit: 3
     single_hit_credit: 0.15
   log_source:
-    # Cap the log-source signal below 1.0 so that a routing hint alone
-    # cannot saturate the weighted composite.
-    max_score: 0.85
+    # Cap the log-source signal so routing alone (weight 0.20) contributes
+    # at most 0.12 to the composite — below the alert threshold on its own.
+    max_score: 0.60
 
 # ── Temporal correlation ────────────────────────────────────────────────
 correlation:
   window_seconds: 300
   repeat_count_escalation: 3
-  max_correlation_boost: 0.20
-  per_event_correlation_boost: 0.05
-  chain_step_boost: 0.12
+  max_correlation_boost: 0.12
+  per_event_correlation_boost: 0.03
+  chain_step_boost: 0.08
   decay_half_life_seconds: 120.0
   # Diminishing-returns accumulator prevents long runs of the same event
   # from saturating the aggregate score. "linear" preserves the original
@@ -70,37 +140,120 @@ correlation:
   # accumulator nor receive correlation boost.
   require_strong_match: true
   chain_rules: []
+  # Do not list Data Component IDs here — leave empty or supply an external policy file
+  # if your deployment needs DC-tagged network correlation.
   network_datacomponents: []
 
 # ── Scoring formula weights ────────────────────────────────────────────
+# Content signals (semantic + keyword) dominate, as required: detection must
+# rest on similarity between the observed log message and the DataComponent's
+# description/Channel text, not on routing metadata.
 scoring_weights:
-  semantic_match: 0.40
-  log_source_match: 0.25
+  semantic_match: 0.55
+  log_source_match: 0.20
   keyword_match: 0.15
-  field_match: 0.10
-  category_match: 0.10
+  field_match: 0.07
+  category_match: 0.03
 
 log_source_families: {}
 
+# Optional score boosts: engine evaluates rules generically. Omit match_datacomponent_ids
+# to apply a rule to whichever DC matched the event (IDs belong in datacomponents/, not here).
+threat_context:
+  enabled: false
+  score_boost_rules:
+    - match_log_type: suricata
+      match_fields:
+        - name: app_proto
+          values:
+            - modbus
+      destination_ports:
+        - 502
+      destination_asset_roles:
+        - simulation
+      boosts:
+        - add: 0.12
+          when:
+            source_ip_in_asset_inventory: true
+            source_asset:
+              is_ics_asset: false
+        - add: 0.06
+          when:
+            source_ip_in_asset_inventory: false
+
 normalization:
+  embedding_text_mode: message_primary
   field_aliases: {}
-  promoted_field_roots: []
-  embedding_key_fields: []
-  asset_ip_field_candidates: []
-  category_rules: []
+  # Suricata/ECS nested objects promoted to top-level keys for scoring.
+  # ``parsed_process_alarm`` is the Logstash JSON target for TE simulation
+  # alarm rows -- promoting it surfaces ``severity``/``pressure_kpa``/etc. at
+  # the top level so ``numeric_field_floors`` can filter ``severity: 0``
+  # bootstrap rows without naming them explicitly.
+  promoted_field_roots:
+    - modbus
+    - flow
+    - parsed_process_alarm
+  # Map common telemetry keys to MITRE ``searchable_indexes.fields`` names so
+  # field_match (Jaccard) is non-zero for NSM / flow DataComponents.  Mirror
+  # Logstash's capitalised process-alarm mirrors (``Severity``/``TagName``/
+  # ``CurrentValue``) back to lowercase so the scoring policy can reference
+  # them uniformly.
+  field_name_aliases:
+    src_ip: [SourceIp]
+    dest_ip: [DestinationIp]
+    src_port: [SourcePort]
+    dest_port: [DestinationPort]
+    proto: [Protocol]
+    app_proto: [ApplicationProtocol]
+    bytes_toserver: [BytesTransferred]
+    bytes_toclient: [BytesTransferred]
+    "flow.bytes_toserver": [BytesTransferred]
+    "flow.bytes_toclient": [BytesTransferred]
+    "flow.bytes": [BytesTransferred]
+    Severity: [severity]
+    TagName: [tag_name]
+    CurrentValue: [current_value]
+  embedding_key_fields:
+    - src_ip
+    - dest_ip
+    - dest_port
+    - proto
+    - app_proto
+    - event_type
+  asset_ip_field_candidates:
+    - asset_ip
+    - src_ip
+    - dest_ip
+  # Narrow, content-driven tagging: require narrative terms that only appear in
+  # deliberate ICS events.  Avoid substrings (``suricata``, ``flow``) that leak
+  # into every baseline NSM record and inflate category_match on NSM DCs.
+  category_rules:
+    - categories:
+        - process_control
+      text_substrings:
+        - process_alarm
+        - reactor_pressure
+      match: any
   default_categories: []
 
 embeddings:
   enabled: true
+  # Line affinity: each DC's MITRE log_sources (Name + Channel) rows are embedded
+  # so events match the most similar catalog line, not only whole-DC text.
   model: "BAAI/bge-small-en-v1.5"
-  device: "cpu"
-  semantic_gate_threshold: 0.25
+  # auto: try CUDA, then Intel XPU (Arc / Data Center GPU with PyTorch XPU), then CPU.
+  device: "auto"
+  # Mini-batch size for log-line encoding (throughput + lower latency per event).
+  encode_batch_size: 64
+  # Only let DCs whose description cosine-matches the log text meaningfully above
+  # the ambient bge-small baseline (~0.30) become candidates.
+  semantic_gate_threshold: 0.40
 
 neo4j:
   enabled: false
-  uri: ""
-  username: "neo4j"
-  password: ""
+  uri: "bolt://localhost:7687"
+  username: "USERNAME"
+  password: "PASSWORD"
   cache_ttl_seconds: 3600
 
 technique_mapper:

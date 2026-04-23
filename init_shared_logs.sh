@@ -39,6 +39,12 @@ for d in "${dirs[@]}"; do
   mkdir -p "$d"
 done
 
+# Optional: touch Suricata eve.json so the path exists before the IDS starts
+# (empty file; Suricata overwrites with NDJSON when running).
+if [[ ! -f "$BASE/router/eve.json" ]]; then
+  touch "$BASE/router/eve.json"
+fi
+
 # Create empty log files for file-level bind mounts (Docker needs the host
 # path to exist before it will bind-mount a file rather than a directory).
 files=(
@@ -71,6 +77,10 @@ files=(
   "$BASE/simulation/nginx/access.log"
   "$BASE/simulation/nginx/error.log"
   "$BASE/simulation/supervisor/supervisord.log"
+  "$BASE/simulation/supervisor/modbus.log"
+  "$BASE/simulation/supervisor/modbus.err"
+  "$BASE/simulation/supervisor/simulation.log"
+  "$BASE/simulation/supervisor/simulation.err"
   "$BASE/router/netfilter/ulogd.log"
   "$BASE/router/supervisor/supervisord.log"
 )

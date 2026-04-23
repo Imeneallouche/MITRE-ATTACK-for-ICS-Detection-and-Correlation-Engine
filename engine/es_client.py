@@ -75,6 +75,7 @@ class ESClient:
         pit_id: Optional[str] = None,
         search_after: Optional[List[Any]] = None,
         excluded_asset_ids: Optional[List[str]] = None,
+        pit_keep_alive: str = "15m",
     ) -> Dict[str, Any]:
         bool_query: Dict[str, Any] = {
             "must": [{"range": {"@timestamp": {"gt": since_ts}}}],
@@ -90,7 +91,7 @@ class ESClient:
         }
 
         if pit_id:
-            query["pit"] = {"id": pit_id, "keep_alive": "1m"}
+            query["pit"] = {"id": pit_id, "keep_alive": pit_keep_alive}
         else:
             query["index"] = index_pattern
 

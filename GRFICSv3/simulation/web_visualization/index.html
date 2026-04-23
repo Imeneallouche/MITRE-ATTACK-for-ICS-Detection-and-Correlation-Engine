@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>GRFICSv3 OT Security Lab Dashboard</title>
+
+    <!-- Keep your existing Unity assets -->
+    <link rel="shortcut icon" href="TemplateData/favicon.ico" />
+    <link rel="stylesheet" href="TemplateData/style.css" />
+    <script src="TemplateData/UnityProgress.js"></script>
+    <script src="Build/UnityLoader.js"></script>
+
+    <style>
+      /* --- Dashboard layout --- */
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #0b0f14;
+        color: #e8eef6;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      }
+
+      :root{
+          --accent: #d7b114;          /* Fortiphyd gold (tweak if needed) */
+          --accent-soft: rgba(215,177,20,0.14);
+          --accent-faint: rgba(215,177,20,0.08);
+      }
+
+      .app {
+        display: flex;
+        height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+      }
+
+      .sidebar {
+        position:relative;
+        width: 270px;
+        min-width: 240px;
+        max-width: 320px;
+        background:
+          radial-gradient(800px 500px at -20% 10%, rgba(215,177,20,0.10), transparent 55%),
+          #0f1722;
+        border-right: 1px solid rgba(255,255,255,0.08);
+        box-shadow: inset -3px 0 0 var(--accent-faint);
+        padding: 18px 14px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .sidebar::before{
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 3px;
+        height: 100%;
+        background: rgba(215,177,20,0.35);
+        box-shadow: 0 0 14px rgba(215,177,20,0.10);
+}
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 10px 6px 10px;
+      }
+
+      .brand .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+      }
+
+      .brand h1 {
+        font-size: 16px;
+        margin: 0;
+        letter-spacing: 0.2px;
+      }
+
+      .brand p {
+        margin: 2px 0 0 0;
+        font-size: 12px;
+        opacity: 0.75;
+      }
+
+      .section-title {
+        font-size: 12px;
+        opacity: 0.8;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 6px 10px 0 10px;
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.04);
+        color: #e8eef6;
+        border-radius: 14px;
+        padding: 14px 12px;
+        cursor: pointer;
+        text-align: left;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        position: relative;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.07);
+        border-color: rgba(215,177,20,0.28);
+        box-shadow: 0 0 0 3px var(--accent-faint);
+      }
+
+      .btn:active {
+        transform: translateY(0px);
+      }
+
+      .icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 40px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.10);
+        font-size: 18px;
+      }
+
+      .btn .meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .btn .meta .label {
+        font-weight: 650;
+        font-size: 14px;
+        line-height: 1.2;
+      }
+
+      .btn .meta .hint {
+        font-size: 12px;
+        opacity: 0.75;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.03);
+        margin: 0 10px;
+      }
+
+      .pill .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ffd166;
+        box-shadow: 0 0 0 3px rgba(255,209,102,0.12);
+      }
+
+      /* --- Tool status chip inside buttons --- */
+      .tool-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        opacity: 0.85;
+        white-space: nowrap;
+      }
+
+      .tool-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6b7280; /* default gray */
+        box-shadow: 0 0 0 3px rgba(107,114,128,0.12);
+      }
+
+      .tool-status-text {
+        font-size: 12px;
+        opacity: 0.85;
+      }
+
+      .sidebar-footer {
+        margin-top: auto;
+        padding: 10px;
+        font-size: 12px;
+        opacity: 0.7;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+
+      /* --- Main area (Unity) --- */
+      .main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+
+      .topbar {
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 14px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        box-shadow: inset 0 -2px 0 var(--accent-faint);
+        background: rgba(255,255,255,0.02);
+      }
+
+      .topbar .title {
+        font-size: 13px;
+        opacity: 0.9;
+      }
+
+      .topbar .actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .small-btn {
+        border: 1px solid rgba(255,255,255,0.12);
+        border-color: rgba(215,177,20,0.28);
+        box-shadow: 0 0 0 3px var(--accent-faint);
+        background: rgba(255,255,255,0.04);
+        color: #e8eef6;
+        border-radius: 10px;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: background 120ms ease, border-color 120ms ease;
+      }
+
+      .small-btn:hover {
+        background: rgba(255,255,255,0.07);
+        border-color: rgba(255,255,255,0.18);
+      }
+
+      .unity-wrap {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 14px;
+        box-sizing: border-box;
+      }
+
+      /* Make Unity fill available space */
+      #unityContainer {
+        width: 100%;
+        height: 100%;
+        max-width: 1400px;
+        max-height: 900px;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: #0a0d12;
+      }
+
+      /* Optional: on very wide screens, allow full stretch */
+      @media (min-width: 1400px) {
+        #unityContainer {
+          max-width: none;
+          max-height: none;
+        }
+      }
+
+      /* Mobile-ish: sidebar becomes top bar */
+      @media (max-width: 860px) {
+        .app {
+          flex-direction: column;
+        }
+        .sidebar {
+          width: 100%;
+          max-width: none;
+          border-right: none;
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+          flex-direction: row;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .sidebar-footer {
+          display: none;
+        }
+      }
+    </style>
+
+<script>
+  var unityInstance = null;
+
+  const toolEndpoints = {
+    "localhost": {
+      attacker: "http://localhost:6088/",
+      defender: "http://localhost:6080/",
+      caldera:  "http://localhost:8888/"
+    },
+    "127.0.0.1": {
+      attacker: "http://127.0.0.1:6088/",
+      defender: "http://127.0.0.1:6080/",
+      caldera:  "http://127.0.0.1:8888/"
+    },
+    "192.168.95.45": {
+      attacker: "http://192.168.90.6:6080/",
+      defender: "http://192.168.95.5:6080/",
+      caldera:  "http://192.168.90.250:8888/"
+    }
+  };
+
+  function openTool(name) {
+    const host = window.location.hostname;
+    const endpoints = toolEndpoints[host] || toolEndpoints["localhost"];
+    const url = endpoints[name];
+
+    if (!url) {
+      alert(`No URL configured for ${name} on host ${host}`);
+      return;
+    }
+
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function getToolUrl(name) {
+    const host = window.location.hostname;
+    const endpoints = toolEndpoints[host] || toolEndpoints["localhost"];
+    return endpoints[name] || null;
+  }
+
+  function setStatus(text, color) {
+    const label = document.getElementById("statusLabel");
+    const dot = document.getElementById("statusDot");
+    if (label) label.textContent = text;
+    if (dot && color) dot.style.background = color;
+  }
+
+  // ---- Tool status polling (stable + no flicker) ----
+
+  // Tuning knobs
+  const POLL_MS_STABLE = 6000;   // when stable, check less often
+  const POLL_MS_UNSTABLE = 1500; // when starting/flapping, check more often
+  const STREAK_TO_CHANGE = 2;    // require 2 consecutive results to flip state
+
+  const toolState = {
+    attacker: { current: null, okStreak: 0, failStreak: 0 },
+    defender: { current: null, okStreak: 0, failStreak: 0 },
+    caldera:  { current: null, okStreak: 0, failStreak: 0 },
+  };
+
+  function setToolStatus(toolName, ok, detailText) {
+    const dot = document.getElementById(`${toolName}Dot`);
+    const text = document.getElementById(`${toolName}Text`);
+    if (!dot || !text) return;
+
+    if (ok === true) {
+      dot.style.background = "#37d67a";
+      dot.style.boxShadow = "0 0 0 3px rgba(55,214,122,0.12)";
+      text.textContent = detailText || "Reachable";
+    } else if (ok === false) {
+      dot.style.background = "#ffd166"; // yellow for "Starting…"
+      dot.style.boxShadow = "0 0 0 3px rgba(255,209,102,0.12)";
+      text.textContent = detailText || "Starting…";
+    } else {
+      dot.style.background = "#6b7280"; // gray for unknown/checking
+      dot.style.boxShadow = "0 0 0 3px rgba(107,114,128,0.12)";
+      text.textContent = detailText || "Checking…";
+    }
+  }
+
+  async function checkTool(name) {
+    const url = getToolUrl(name);
+    if (!url) {
+      return false;
+    }
+
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 900);
+
+      await fetch(url, {
+        mode: "no-cors",
+        cache: "no-store",
+        signal: ctrl.signal
+      });
+
+      clearTimeout(t);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function applyStabilizedResult(name, okNow) {
+    const s = toolState[name];
+
+    if (okNow) {
+      s.okStreak += 1;
+      s.failStreak = 0;
+    } else {
+      s.failStreak += 1;
+      s.okStreak = 0;
+    }
+
+    // Only flip state after we see a streak
+    if (okNow && s.current !== true && s.okStreak >= STREAK_TO_CHANGE) {
+      s.current = true;
+      setToolStatus(name, true, "Reachable");
+    } else if (!okNow && s.current !== false && s.failStreak >= STREAK_TO_CHANGE) {
+      s.current = false;
+      setToolStatus(name, false, "Starting…");
+    } else if (s.current === null) {
+      // Only show "Checking…" while we don't have enough signal yet
+      setToolStatus(name, null, "Checking…");
+    }
+  }
+
+  function anyUnstable() {
+    return Object.values(toolState).some(s => s.current !== true);
+  }
+
+  async function pollOnce() {
+    const [attOk, defOk, calOk] = await Promise.all([
+      checkTool("attacker"),
+      checkTool("defender"),
+      checkTool("caldera"),
+    ]);
+
+    applyStabilizedResult("attacker", attOk);
+    applyStabilizedResult("defender", defOk);
+    applyStabilizedResult("caldera",  calOk);
+
+    const next = anyUnstable() ? POLL_MS_UNSTABLE : POLL_MS_STABLE;
+    setTimeout(pollOnce, next);
+  }
+
+const SIM_POLL_MS = 3000;
+
+  function isValidJson(text) {
+    try {
+      const obj = JSON.parse(text);
+      // Basic sanity: must be a non-null object or array
+      return obj !== null && (typeof obj === "object");
+    } catch {
+      return false;
+    }
+  }
+
+  async function checkSimulationJson() {
+    try {
+      const res = await fetch("/data/index.php", { cache: "no-store" });
+      if (!res.ok) return false;
+
+      const text = await res.text();
+      return isValidJson(text);
+    } catch {
+      return false;
+    }
+  }
+
+  // Updates the main pill ONLY when it changes (prevents flicker)
+  let simLastState = null; // null=unknown, true=running, false=not running
+  async function refreshSimulationStatus() {
+    const ok = await checkSimulationJson();
+
+    if (ok === simLastState) return; // no change, don't touch UI
+
+    simLastState = ok;
+    if (ok) {
+      setStatus("Simulation running", "#37d67a");
+    } else {
+      // Pick wording you like; this reads well during boot/restarts
+      setStatus("Simulation starting…", "#ffd166");
+    }
+  }
+
+  // ---- One load handler: init everything ----
+  window.addEventListener("load", function () {
+    // Tool indicators start calm
+    setToolStatus("attacker", null, "Checking…");
+    setToolStatus("defender", null, "Checking…");
+    pollOnce();
+
+    refreshSimulationStatus();
+    setInterval(refreshSimulationStatus, SIM_POLL_MS);
+
+    // Unity init
+    unityInstance = UnityLoader.instantiate(
+      "unityContainer",
+      "Build/ChemicalPlant.json",
+      { onProgress: UnityProgress }
+    );
+
+    setStatus("Simulation loading…", "#ffd166");
+
+    // Simple baseline: mark running after a short delay
+  });
+</script>
+
+
+  </head>
+
+  <body>
+    <div class="app">
+      <!-- Left navigation -->
+      <aside class="sidebar">
+        <div class="brand">
+          <div>
+            <h1>GRFICSv3</h1>
+            <p>Lab dashboard</p>
+          </div>
+        </div>
+
+        <div class="pill" title="Basic state indicator (Unity load progress still shown in the canvas)">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusLabel">Starting…</span>
+        </div>
+
+        <div class="section-title">Connect</div>
+
+        <button class="btn" onclick="openTool('attacker')">
+          <div class="icon">🟥</div>
+          <div class="meta">
+            <div class="label">Attacker Workstation</div>
+            <div class="hint">
+              <span class="tool-status">
+                <span id="attackerDot" class="tool-dot"></span>
+                <span id="attackerText" class="tool-status-text">Checking…</span>
+              </span>
+            </div>
+          </div>
+        </button>
+
+        <button class="btn" onclick="openTool('defender')">
+          <div class="icon">🟦</div>
+          <div class="meta">
+            <div class="label">Defender Workstation</div>
+            <div class="hint">
+              <span class="tool-status">
+                <span id="defenderDot" class="tool-dot"></span>
+                <span id="defenderText" class="tool-status-text">Checking…</span>
+              </span>
+            </div>
+          </div>
+        </button>
+
+        <button class="btn" onclick="openTool('caldera')">
+          <div class="icon">🌋</div>
+          <div class="meta">
+            <div class="label">Caldera</div>
+            <div class="hint">
+              <span class="tool-status">
+                <span id="calderaDot" class="tool-dot"></span>
+                <span id="calderaText" class="tool-status-text">Checking…</span>
+              </span>
+            </div>
+          </div>
+        </button>
+
+        <div class="section-title">Simulation</div>
+
+        <button class="btn" onclick="unityInstance && unityInstance.SetFullscreen(1)">
+          <div class="icon">⛶</div>
+          <div class="meta">
+            <div class="label">Fullscreen Simulation</div>
+            <div class="hint">Expand the Unity view</div>
+          </div>
+        </button>
+
+        <div class="sidebar-footer">
+          GRFICSv3 is an open-source OT security lab by Fortiphyd Logic
+        </div>
+      </aside>
+
+      <!-- Main content (Unity focus) -->
+      <main class="main">
+        <div class="topbar">
+          <div class="title">Chemical Plant Simulation</div>
+          <div class="actions">
+            <button class="small-btn" onclick="openTool('attacker')">Attacker</button>
+            <button class="small-btn" onclick="openTool('defender')">Defender</button>
+            <button class="small-btn" onclick="unityInstance && unityInstance.SetFullscreen(1)">Fullscreen</button>
+          </div>
+        </div>
+
+        <div class="unity-wrap">
+          <div id="unityContainer"></div>
+        </div>
+      </main>
+    </div>
+
+  </body>
+</html>

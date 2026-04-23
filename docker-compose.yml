@@ -10,7 +10,12 @@ services:
   # ── ICS Simulation Layer ─────────────────────────────────────────────────
 
   simulation:
-    image: fortiphyd/grfics-simulation
+    # Build from local GRFICSv3 sources so fixes (supervisor/modbus logging, TE alarms) apply.
+    # Requires: ../GRFICSv3/simulation (sibling of this repo). Override with: docker compose build simulation
+    build:
+      context: ./GRFICSv3/simulation
+      dockerfile: Dockerfile
+    image: grfics-simulation-local
     container_name: simulation
     hostname: simulation
     cap_add:
@@ -187,7 +192,7 @@ services:
     # ── C2 framework – for offensive simulation only
     # Built from local source (modified from fortiphyd/grfics-caldera)
     build:
-      context: ./caldera
+      context: ./GRFICSv3/caldera
       dockerfile: Dockerfile
     image: grfics-caldera-local   # tag given to the locally built image
     container_name: caldera

@@ -21,9 +21,40 @@ import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 from .models import CandidateMatch, CorrelationGroup
+
+
+def _extract_event_ips(match: CandidateMatch) -> Set[str]:
+    """Return the set of routable IPs attached to this event.
+
+    Collapses src_ip / dest_ip / asset_ip from ``event.fields`` and
+    ``event.raw_source`` into a single set used for cross-asset grouping.
+    Filters out wildcard / unspecified addresses to avoid spurious bridging.
+    """
+    fields = match.event.fields or {}
+    raw = match.event.raw_source or {}
+    candidates: Set[str] = set()
+    for container in (fields, raw):
+        for key in ("src_ip", "source_ip", "source.ip", "dest_ip",
+                    "destination_ip", "destination.ip", "asset_ip"):
+            val = container.get(key)
+            if isinstance(val, str) and val:
+                candidates.add(val.strip())
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, str) and item:
+                        candidates.add(item.strip())
+    if match.event.asset_ip:
+        candidates.add(str(match.event.asset_ip).strip())
+    # Drop degenerate addresses so they cannot bridge unrelated groups.
+    filtered: Set[str] = set()
+    for ip in candidates:
+        if not ip or ip in {"0.0.0.0", "::", "-", "unknown"}:
+            continue
+        filtered.add(ip)
+    return filtered
 
 
 @dataclass
@@ -81,6 +112,9 @@ class CorrelationEngine:
     def __init__(self, cfg: CorrelationConfig) -> None:
         self.cfg = cfg
         self.groups: Dict[str, CorrelationGroup] = {}
+        # Side-table of IPs participating in each group (used by the generic
+        # IP-bridge to group cross-asset attack steps without naming DCs).
+        self._group_ips: Dict[str, Set[str]] = {}
 
     def process(self, match: CandidateMatch) -> Tuple[CorrelationGroup, Dict[str, float]]:
         group = self._select_group(match)
@@ -98,6 +132,7 @@ class CorrelationEngine:
                 aggregate_score=match.similarity_score,
             )
             self.groups[group.group_id] = group
+            self._group_ips[group.group_id] = _extract_event_ips(match)
             return group, {"correlation_boost": 0.0, "chain_boost": 0.0}
 
         group.add_match(match)
@@ -117,24 +152,40 @@ class CorrelationEngine:
 
         # Effective prior count: optionally exclude weak matches so that
         # the accumulator reflects independent corroborating evidence.
+        # Accumulation is *diversity-driven*: only the count of distinct
+        # DataComponents contributes to the boost, so a stream of the same
+        # DC (e.g. bursts of idle NSM flows, or a looping process alarm)
+        # cannot inflate the aggregate score on its own.  Multi-stage attack
+        # chains naturally pick up boost as new DCs join the group.
         if self.cfg.require_strong_match:
             strong_priors = [
                 m for m in group.matches[:-1]
                 if not getattr(m, "weak_evidence", False)
             ]
-            n_prior_effective = len(strong_priors)
+            effective_matches = strong_priors + (
+                [match] if not getattr(match, "weak_evidence", False) else []
+            )
+            distinct_dcs = {m.datacomponent_id for m in effective_matches}
             dc_counts: Dict[str, int] = {}
-            for m in strong_priors + [match]:
+            for m in effective_matches:
                 dc_counts[m.datacomponent_id] = dc_counts.get(m.datacomponent_id, 0) + 1
         else:
-            n_prior_effective = max(len(group.matches) - 1, 0)
+            distinct_dcs = {m.datacomponent_id for m in group.matches}
             dc_counts = {}
             for m in group.matches:
                 dc_counts[m.datacomponent_id] = dc_counts.get(m.datacomponent_id, 0) + 1
 
+        # Seed DC doesn't count (needs *corroboration*, not self-credit).
+        n_prior_effective = max(len(distinct_dcs) - 1, 0)
+
         repeat_boost = 0.0
         max_count = max(dc_counts.values(), default=0)
-        if max_count >= self.cfg.repeat_count_escalation:
+        # Repeat-escalation only when at least two distinct DCs participate.
+        # Pure same-DC repetition is treated as noise, not corroborating evidence.
+        if (
+            max_count >= self.cfg.repeat_count_escalation
+            and len(distinct_dcs) >= 2
+        ):
             repeat_boost = self.cfg.per_event_correlation_boost
 
         if self.cfg.accumulator == "log":
@@ -153,6 +204,8 @@ class CorrelationEngine:
             1.0,
             max(group.aggregate_score, match.similarity_score) + corr_boost + chain_boost,
         )
+        # Keep the IP participation set in sync for IP-bridge grouping.
+        self._group_ips.setdefault(group.group_id, set()).update(_extract_event_ips(match))
         return group, {"correlation_boost": corr_boost, "chain_boost": chain_boost}
 
     def _temporal_decay(self, delta_seconds: float) -> float:
@@ -167,12 +220,18 @@ class CorrelationEngine:
         best: Optional[CorrelationGroup] = None
         best_score = -1.0
 
+        match_ips = _extract_event_ips(match)
         for group in list(self.groups.values()):
             if now - group.last_timestamp > window:
                 continue
 
-            if group.asset_id != match.event.asset_id:
-                if not self._cross_asset_eligible(group, match):
+            same_asset = group.asset_id == match.event.asset_id
+            ip_bridge = False
+            if not same_asset:
+                group_ips = self._group_ips.get(group.group_id, set())
+                if match_ips and group_ips and match_ips & group_ips:
+                    ip_bridge = True
+                elif not self._cross_asset_eligible(group, match):
                     continue
 
             score = 0.0
@@ -183,8 +242,12 @@ class CorrelationEngine:
             if (prev_dc, match.datacomponent_id) in self.cfg.chain_rules:
                 score += 3.0
 
-            if group.asset_id == match.event.asset_id:
+            if same_asset:
                 score += 1.0
+            elif ip_bridge:
+                # Cross-asset but a shared src/dst IP ties the steps together.
+                # Slightly below same-asset affinity but still meaningful.
+                score += 0.75
 
             recency_seconds = (now - group.last_timestamp).total_seconds()
             if recency_seconds < 60:
@@ -232,6 +295,7 @@ class CorrelationEngine:
         expired = [gid for gid, g in self.groups.items() if now - g.last_timestamp > window]
         for gid in expired:
             del self.groups[gid]
+            self._group_ips.pop(gid, None)
         return len(expired)
 
     def get_group_summary(self, group_id: str) -> Optional[Dict]:

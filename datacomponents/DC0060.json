@@ -1,181 +1,197 @@
 {
-    "id": "DC0060",
-    "name": "Service Creation",
-    "type": "DataComponent",
-    "description": "The registration of a new service or daemon on an operating system. Adversaries often create services to establish persistence, ensuring their malicious code runs automatically at system startup or in the background with elevated privileges.",
-    "searchable_indexes": {
-        "platforms": [
-            "windows",
-            "linux",
-            "macos"
-        ],
-        "log_source_types": [
-            "event_log",
-            "endpoint",
-            "audit",
-            "syslog"
-        ],
-        "indicator_types": [
-            "service_name",
-            "file_path",
-            "command_line"
-        ],
-        "categories": [
-            "persistence",
-            "privilege_escalation",
-            "execution"
-        ],
-        "fields": [
-            "ServiceName",
-            "ServiceFileName",
-            "ImagePath",
-            "StartType",
-            "AccountName",
-            "SID",
-            "EventID",
-            "RegistryKey"
-        ],
-        "keywords": [
-            "4697",
-            "7045",
-            "7034",
-            "new-service",
-            "set-service",
-            "systemd",
-            "launchd",
-            "plist",
-            "auditctl",
-            "sysmon event 13"
-        ]
-    },
-    "collection_measures": {
-        "windows": {
-            "event_logs": [
-                {
-                    "event_id": "4697",
-                    "source": "Security",
-                    "description": "Captures the creation of a new Windows service."
-                },
-                {
-                    "event_id": "7045",
-                    "source": "System",
-                    "description": "Captures services installed by administrators or adversaries."
-                },
-                {
-                    "event_id": "7034",
-                    "source": "System",
-                    "description": "Service crash or unexpected stop; could indicate malicious modification or exploitation."
-                }
-            ],
-            "sysmon": [
-                {
-                    "event_id": "1",
-                    "description": "Process Creation; captures service executables."
-                },
-                {
-                    "event_id": "4",
-                    "description": "Service state changes; detects service installation events."
-                },
-                {
-                    "event_id": "13",
-                    "description": "Registry modifications; captures service persistence changes (e.g., modifying HKLM\\SYSTEM\\CurrentControlSet\\Services)."
-                }
-            ],
-            "powershell": {
-                "event_id": "4104",
-                "description": "Script Block Logging; monitor for specific service manipulation cmdlets.",
-                "keywords": [
-                    "New-Service",
-                    "Set-Service"
-                ]
-            }
-        },
-        "linux": {
-            "logs": [
-                "/var/log/syslog",
-                "/var/log/messages",
-                "/var/log/daemon.log"
-            ],
-            "audit_framework": {
-                "tool": "AuditD",
-                "command": "auditctl -w /etc/systemd/system -p wa -k service_creation",
-                "description": "Detects changes to systemd service configurations."
-            },
-            "systemd": {
-                "command": "journalctl -u <service_name>",
-                "description": "Captures logs for newly created systemd services."
-            }
-        },
-        "macos": {
-            "launch_services": {
-                "monitored_paths": [
-                    "/Library/LaunchDaemons/",
-                    "/Library/LaunchAgents/"
-                ],
-                "description": "Monitor for new plist files indicating service creation."
-            }
-        }
-    },
-    "log_sources": [
-        {
-            "Name": "auditd:CONFIG_CHANGE",
-            "Channel": "creation or modification of systemd services"
-        },
-        {
-            "Name": "containerLogs:systemd_unit_files",
-            "Channel": "unit file referencing container binary with persistent flags"
-        },
-        {
-            "Name": "kubernetes:audit",
-            "Channel": "create"
-        },
-        {
-            "Name": "linux:osquery",
-            "Channel": "newly registered unit file with ExecStart pointing to unknown binary"
-        },
-        {
-            "Name": "linux:syslog",
-            "Channel": "systemctl start/enable with uncommon binary paths"
-        },
-        {
-            "Name": "macos:osquery",
-            "Channel": "Process Events and Launch Daemons"
-        },
-        {
-            "Name": "macos:osquery",
-            "Channel": "launch_daemons"
-        },
-        {
-            "Name": "macos:osquery",
-            "Channel": "detection of new launch agents with suspicious paths or unsigned binaries"
-        },
-        {
-            "Name": "macos:unifiedlog",
-            "Channel": "creation or loading of new launchd services"
-        },
-        {
-            "Name": "macos:unifiedlog",
-            "Channel": "launchd loading new LaunchDaemon or changes to existing daemon configuration"
-        },
-        {
-            "Name": "Service",
-            "Channel": "None"
-        },
-        {
-            "Name": "WinEventLog:Security",
-            "Channel": "EventCode=4697"
-        },
-        {
-            "Name": "WinEventLog:System",
-            "Channel": "EventCode=7036"
-        },
-        {
-            "Name": "WinEventLog:System",
-            "Channel": "EventCode=7045"
-        },
-        {
-            "Name": "WinEventLog:System",
-            "Channel": "EventCode=7031, 7034"
-        }
+  "id": "DC0060",
+  "name": "Service Creation",
+  "type": "DataComponent",
+  "description": "The registration of a new service or daemon on an operating system. Adversaries often create services to establish persistence, ensuring their malicious code runs automatically at system startup or in the background with elevated privileges.",
+  "searchable_indexes": {
+    "platforms": [
+      "windows",
+      "linux",
+      "macos"
+    ],
+    "log_source_types": [
+      "event_log",
+      "endpoint",
+      "audit",
+      "syslog"
+    ],
+    "indicator_types": [
+      "service_name",
+      "file_path",
+      "command_line"
+    ],
+    "categories": [
+      "persistence",
+      "privilege_escalation",
+      "execution"
+    ],
+    "fields": [
+      "ServiceName",
+      "ServiceFileName",
+      "ImagePath",
+      "StartType",
+      "AccountName",
+      "SID",
+      "EventID",
+      "RegistryKey"
+    ],
+    "keywords": [
+      "4697",
+      "7045",
+      "7034",
+      "new-service",
+      "set-service",
+      "systemd",
+      "launchd",
+      "plist",
+      "auditctl",
+      "sysmon event 13"
     ]
+  },
+  "collection_measures": {
+    "windows": {
+      "event_logs": [
+        {
+          "event_id": "4697",
+          "source": "Security",
+          "description": "Captures the creation of a new Windows service."
+        },
+        {
+          "event_id": "7045",
+          "source": "System",
+          "description": "Captures services installed by administrators or adversaries."
+        },
+        {
+          "event_id": "7034",
+          "source": "System",
+          "description": "Service crash or unexpected stop; could indicate malicious modification or exploitation."
+        }
+      ],
+      "sysmon": [
+        {
+          "event_id": "1",
+          "description": "Process Creation; captures service executables."
+        },
+        {
+          "event_id": "4",
+          "description": "Service state changes; detects service installation events."
+        },
+        {
+          "event_id": "13",
+          "description": "Registry modifications; captures service persistence changes (e.g., modifying HKLM\\SYSTEM\\CurrentControlSet\\Services)."
+        }
+      ],
+      "powershell": {
+        "event_id": "4104",
+        "description": "Script Block Logging; monitor for specific service manipulation cmdlets.",
+        "keywords": [
+          "New-Service",
+          "Set-Service"
+        ]
+      }
+    },
+    "linux": {
+      "logs": [
+        "/var/log/syslog",
+        "/var/log/messages",
+        "/var/log/daemon.log"
+      ],
+      "audit_framework": {
+        "tool": "AuditD",
+        "command": "auditctl -w /etc/systemd/system -p wa -k service_creation",
+        "description": "Detects changes to systemd service configurations."
+      },
+      "systemd": {
+        "command": "journalctl -u <service_name>",
+        "description": "Captures logs for newly created systemd services."
+      }
+    },
+    "macos": {
+      "launch_services": {
+        "monitored_paths": [
+          "/Library/LaunchDaemons/",
+          "/Library/LaunchAgents/"
+        ],
+        "description": "Monitor for new plist files indicating service creation."
+      }
+    }
+  },
+  "log_sources": [
+    {
+      "Name": "auditd:CONFIG_CHANGE",
+      "Channel": "creation or modification of systemd services"
+    },
+    {
+      "Name": "containerLogs:systemd_unit_files",
+      "Channel": "unit file referencing container binary with persistent flags"
+    },
+    {
+      "Name": "kubernetes:audit",
+      "Channel": "create"
+    },
+    {
+      "Name": "linux:osquery",
+      "Channel": "newly registered unit file with ExecStart pointing to unknown binary"
+    },
+    {
+      "Name": "linux:syslog",
+      "Channel": "systemctl start/enable with uncommon binary paths"
+    },
+    {
+      "Name": "macos:osquery",
+      "Channel": "Process Events and Launch Daemons"
+    },
+    {
+      "Name": "macos:osquery",
+      "Channel": "launch_daemons"
+    },
+    {
+      "Name": "macos:osquery",
+      "Channel": "detection of new launch agents with suspicious paths or unsigned binaries"
+    },
+    {
+      "Name": "macos:unifiedlog",
+      "Channel": "creation or loading of new launchd services"
+    },
+    {
+      "Name": "macos:unifiedlog",
+      "Channel": "launchd loading new LaunchDaemon or changes to existing daemon configuration"
+    },
+    {
+      "Name": "Service",
+      "Channel": "None"
+    },
+    {
+      "Name": "WinEventLog:Security",
+      "Channel": "EventCode=4697"
+    },
+    {
+      "Name": "WinEventLog:System",
+      "Channel": "EventCode=7036"
+    },
+    {
+      "Name": "WinEventLog:System",
+      "Channel": "EventCode=7045"
+    },
+    {
+      "Name": "WinEventLog:System",
+      "Channel": "EventCode=7031, 7034"
+    },
+    {
+      "Name": "hmi:supervisor",
+      "Channel": "Supervisord managing HMI services (service metadata)"
+    },
+    {
+      "Name": "linux:router_supervisord",
+      "Channel": "Supervisord managing router services (suricata, flask)"
+    },
+    {
+      "Name": "linux:sim_supervisord",
+      "Channel": "Supervisord managing simulation services"
+    },
+    {
+      "Name": "linux:ews_supervisord",
+      "Channel": "Supervisord managing engineering workstation services"
+    }
+  ]
 }

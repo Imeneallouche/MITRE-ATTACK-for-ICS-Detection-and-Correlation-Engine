@@ -28,11 +28,19 @@ class NormalizationRules:
     """Container for all configuration-driven normalization rules."""
 
     field_aliases: Dict[str, str] = field(default_factory=dict)
+    # ECS / vendor field -> additional keys that mirror the same value so
+    # MITRE catalog ``searchable_indexes.fields`` (e.g. SourceIp) overlap
+    # with common log shapes (src_ip) without per-DC code.
+    field_name_aliases: Dict[str, List[str]] = field(default_factory=dict)
     promoted_field_roots: List[str] = field(default_factory=list)
     embedding_key_fields: List[str] = field(default_factory=list)
     asset_ip_field_candidates: List[str] = field(default_factory=list)
     category_rules: List[CategoryRule] = field(default_factory=list)
     default_categories: List[str] = field(default_factory=list)
+    # ``message_primary``: semantic encoding uses observed log source + *original* body only
+    # (no appended key=value telemetry), aligning with DC description + channel text.
+    # ``full``: legacy behaviour — append ``embedding_key_fields`` for extra context.
+    embedding_text_mode: str = "message_primary"
 
     @classmethod
     def from_config(cls, cfg: Dict[str, Any]) -> "NormalizationRules":
@@ -59,13 +67,29 @@ class NormalizationRules:
                 match=str(entry.get("match", "any")).lower(),
             ))
 
+        fn_aliases: Dict[str, List[str]] = {}
+        raw_fn = cfg.get("field_name_aliases")
+        if isinstance(raw_fn, dict):
+            for k, v in raw_fn.items():
+                key = str(k)
+                if isinstance(v, list):
+                    fn_aliases[key] = [str(x) for x in v if x]
+                elif v:
+                    fn_aliases[key] = [str(v)]
+
+        mode = str(cfg.get("embedding_text_mode", "message_primary")).strip().lower()
+        if mode not in ("message_primary", "full"):
+            mode = "message_primary"
+
         return cls(
             field_aliases=aliases,
+            field_name_aliases=fn_aliases,
             promoted_field_roots=_str_list(cfg.get("promoted_field_roots")),
             embedding_key_fields=_str_list(cfg.get("embedding_key_fields")),
             asset_ip_field_candidates=_str_list(cfg.get("asset_ip_field_candidates")),
             category_rules=rules,
             default_categories=_str_list(cfg.get("default_categories")),
+            embedding_text_mode=mode,
         )
 
 
@@ -112,10 +136,17 @@ class EventNormalizer:
 
         log_type = str(source.get("log_type") or "unknown")
         log_source = str(source.get("log_source_normalized") or "unknown")
-        log_message = str(source.get("log_message") or source.get("message") or "")
+        original_log_message = str(source.get("log_message") or source.get("message") or "").strip()
+        log_message = original_log_message
+        if not log_message:
+            log_message = self._synthesize_fallback_message(source, fields)
 
         categories = sorted(self._infer_categories(log_type, log_source, log_message))
-        emb_text = self._build_embedding_text(log_message, log_source, fields)
+        emb_text = self._build_embedding_text(
+            original_body=original_log_message,
+            log_source=log_source,
+            fields=fields,
+        )
 
         return NormalizedEvent(
             document_id=str(hit.get("_id")),
@@ -130,6 +161,7 @@ class EventNormalizer:
             log_message=log_message,
             fields=fields,
             raw_source=source,
+            original_log_message=original_log_message,
             is_ics_asset=is_ics,
             asset_role=asset_role,
             categories=categories,
@@ -155,19 +187,68 @@ class EventNormalizer:
                 for k, v in nested.items():
                     fields[f"{nested_key}.{k}"] = v
                     fields[k] = v
+
+        self._apply_field_name_aliases(fields)
         return fields
 
-    def _build_embedding_text(
+    def _apply_field_name_aliases(self, fields: Dict[str, Any]) -> None:
+        """Duplicate values under MITRE-style names (and configured aliases)."""
+        aliases = self.rules.field_name_aliases
+        if not aliases:
+            return
+        # Snapshot keys so mirroring does not recurse infinitely.
+        for key, val in list(fields.items()):
+            if val is None or val == "":
+                continue
+            targets = aliases.get(key)
+            if targets is None:
+                targets = aliases.get(key.lower())
+            if not targets:
+                continue
+            for alt in targets:
+                if alt not in fields or fields[alt] in (None, ""):
+                    fields[alt] = val
+
+    def _synthesize_fallback_message(
         self,
-        log_message: str,
-        log_source: str,
+        source: Dict[str, Any],
         fields: Dict[str, Any],
     ) -> str:
-        parts: List[str] = [f"[{log_source}]", log_message]
+        """When ``message`` / ``log_message`` is empty (common for flow-only IDS rows)."""
+        parts: List[str] = []
+        lt = str(source.get("log_type") or "").strip()
+        if lt:
+            parts.append(f"log_type={lt}")
+        ls = str(source.get("log_source_normalized") or "").strip()
+        if ls:
+            parts.append(f"log_source_normalized={ls}")
         for key in sorted(self.rules.embedding_key_fields):
             val = fields.get(key)
             if val is not None and str(val).strip():
                 parts.append(f"{key}={val}")
+        return " ".join(parts).strip()
+
+    def _build_embedding_text(
+        self,
+        *,
+        original_body: str,
+        log_source: str,
+        fields: Dict[str, Any],
+    ) -> str:
+        """Text encoded for the embedding model vs. DC description + channel embeddings.
+
+        ``message_primary`` uses only the catalog-style log source tag and the *original*
+        indexed message body so similarity reflects narrative content, not derived metadata.
+        """
+        body = (original_body or "").strip()
+        parts: List[str] = [f"[{log_source}]"]
+        if body:
+            parts.append(body)
+        if self.rules.embedding_text_mode == "full":
+            for key in sorted(self.rules.embedding_key_fields):
+                val = fields.get(key)
+                if val is not None and str(val).strip():
+                    parts.append(f"{key}={val}")
         text = " ".join(parts)
         if len(text) > 1024:
             text = text[:1024]
