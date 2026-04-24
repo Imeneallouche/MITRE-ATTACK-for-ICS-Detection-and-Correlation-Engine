@@ -1,0 +1,168 @@
+# ────────────────────────────────────────────────────────────────────────
+#  Learning-enhanced ICS detection — unified configuration
+#
+#  This file is consumed by the four learning layers (A=alert classifier,
+#  B=chain attributor, C=triage policy, D=mitigation RAG+LLM) and by the
+#  orchestrator that wires them together.  Every numeric is an operator
+#  knob — none of the engine's deterministic behaviour depends on it.
+# ────────────────────────────────────────────────────────────────────────
+
+paths:
+  state_dir: "./state/learning"
+  labels_file: "./state/learning/labels.jsonl"
+  caldera_reports_dir: "./Caldera Reports"
+  layer_a_model: "./state/learning/layer_a/model.joblib"
+  layer_b_model: "./state/learning/layer_b/model.pt"
+  layer_c_policy: "./state/learning/layer_c/policy.pt"
+  layer_b_vocab: "./state/learning/layer_b/vocab.json"
+  metrics_dir: "./state/learning/metrics"
+
+elasticsearch:
+  alert_index_pattern: "ics-alerts-*"
+  source_index_pattern: "ics-*"
+  scroll_size: 1000
+
+# ── Time alignment ───────────────────────────────────────────────────────
+# Caldera scheduling jitter + Filebeat → Logstash → ES ingestion lag.
+# Events within ±skew_seconds of a window boundary are excluded from
+# *training* (still kept for evaluation) to avoid label noise.
+labels:
+  skew_seconds: 15
+  default_window_label: "benign"
+  ambiguous_threshold_seconds: 30
+
+# ── Layer A: per-alert PU classifier ────────────────────────────────────
+layer_a:
+  enabled: true
+  # Backend: "xgboost" if installed, falls back to sklearn HistGradientBoosting.
+  backend: "auto"
+  # nnPU loss for the prior-aware reweighting; the classifier still trains
+  # cross-entropy on weak labels (positive=in-chain, negative=benign-window).
+  nnpu_prior: 0.05            # estimated fraction of true positives
+  calibration: "isotonic"      # isotonic | sigmoid | none
+  text_embedding_dim: 384      # bge-small-en-v1.5
+  max_features: 1024
+  min_train_samples: 200
+  drift_detector:
+    enabled: true
+    method: "page_hinkley"     # page_hinkley | adwin (adwin needs river)
+    delta: 0.005
+    threshold: 50
+  # Safety rail: any alert whose *deterministic* score is above this value
+  # passes through Layer A regardless of the model's verdict.  Prevents the
+  # learned classifier from suppressing the engine's high-confidence hits.
+  recall_floor_score: 0.78
+
+# ── Layer B: causal-window Transformer chain attributor ─────────────────
+layer_b:
+  enabled: true
+  device: "auto"               # auto -> cuda if available, else cpu
+  window_seconds: 600
+  max_seq_len: 64
+  d_model: 128
+  num_heads: 4
+  num_layers: 3
+  ff_dim: 256
+  dropout: 0.1
+  causal_window: 8             # local causal attention window
+  technique_threshold: 0.45    # minimum probability to attribute a technique
+  unknown_chain_label: "__UNKNOWN__"
+  # Hierarchical mask: restrict technique outputs to those whose tactic was
+  # also predicted with prob >= tactic_threshold.
+  tactic_threshold: 0.35
+  train:
+    batch_size: 16
+    epochs: 20
+    lr: 0.0005
+    weight_decay: 0.0001
+    grad_clip: 1.0
+    val_split: 0.2
+
+# ── Layer C: DRLHF / contextual-bandit triage policy ────────────────────
+layer_c:
+  enabled: true
+  # Action space — STRICTLY advisory (no environment-altering actions).
+  actions: ["accept", "defer_to_analyst", "downgrade", "upgrade"]
+  # Reward shaping (per Hoang & Le 2025 / HARE 2025).
+  reward:
+    accept_true_positive: 1.0
+    accept_false_positive: -1.5
+    defer_correct: 0.6
+    defer_incorrect: -0.3
+    downgrade_true_positive: -1.0
+    downgrade_false_positive: 0.3
+    upgrade_true_positive: 0.7
+    upgrade_false_positive: -0.7
+    analyst_workload_penalty: -0.05   # per defer (workload cost)
+  # Always-accept guardrail: if Layer A confidence >= this, force "accept"
+  # regardless of policy choice.
+  accept_safety_threshold: 0.85
+  # Always-defer guardrail: if classifier confidence is in this band the
+  # policy is locked to "defer_to_analyst".
+  ambiguity_band: [0.45, 0.55]
+  # AVAR — analyst-validated alert repository (cache of confirmed verdicts).
+  avar:
+    enabled: true
+    max_size: 10000
+    fingerprint_fields: ["asset_id", "datacomponent", "log_message"]
+  policy:
+    backend: "linucb"          # linucb (no torch) | dqn (torch) | ppo (torch)
+    feature_dim: 32
+    alpha: 1.0                 # LinUCB exploration parameter
+    learning_rate: 0.0003
+    gamma: 0.95
+    train_iterations: 2000
+
+# ── Layer D: KG retrieval + multi-agent LLM mitigation pipeline ─────────
+layer_d:
+  enabled: true
+  # Retrieval against the existing Neo4j MITRE ATT&CK for ICS graph.
+  retrieval:
+    max_techniques: 5
+    max_mitigations_per_technique: 8
+    include_groups: true
+    include_software: true
+    include_assets: true
+    semantic_top_k: 6
+  # Hierarchical retrieval (H-TechniqueRAG-style): retrieve tactics first.
+  hierarchy:
+    enabled: true
+    tactic_top_k: 3
+  # Multi-agent LLM (IRCopilot-style decomposition).
+  llm:
+    backend: "auto"            # auto | openai | ollama | mock
+    model: "gpt-4o-mini"
+    temperature: 0.2
+    max_tokens: 1500
+    timeout_seconds: 60
+    api_base_env: "OPENAI_BASE_URL"
+    api_key_env: "OPENAI_API_KEY"
+    pinned_version: true
+  # Output safety rails.
+  safety:
+    require_human_approval: true
+    forbid_environment_actions: true
+    abstain_on_empty_retrieval: true
+    redact_asset_ips: false
+  # Output report modes (ICSSPulse-style: technical for analysts,
+  # executive for management).
+  report_modes: ["technical", "executive"]
+
+# ── Orchestrator / API ──────────────────────────────────────────────────
+api:
+  host: "0.0.0.0"
+  port: 8090
+  cors_origins: ["*"]
+  enable_layer_a: true
+  enable_layer_b: true
+  enable_layer_c: true
+  enable_layer_d: true
+  poll_interval_seconds: 10
+  alerts_per_cycle: 200
+
+# ── Evaluation harness ──────────────────────────────────────────────────
+evaluation:
+  per_chain_breakdown: true
+  technique_top_k: [1, 3, 5]
+  latency_seconds_buckets: [10, 30, 60, 120, 300]
+  emit_csv_report: true

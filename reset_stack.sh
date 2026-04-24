@@ -84,8 +84,8 @@ run_script "$SSH_SETUP_SCRIPT"
 
 
 
-log "Waiting 60 seconds before starting detection-engine"
-sleep 60
+log "Waiting 180 seconds before starting detection-engine"
+sleep 180
 
 log "Starting detection-engine"
 if [[ -f "$SCRIPT_DIR/docker-compose.yml" || -f "$SCRIPT_DIR/compose.yml" || -f "$SCRIPT_DIR/compose.yaml" ]]; then

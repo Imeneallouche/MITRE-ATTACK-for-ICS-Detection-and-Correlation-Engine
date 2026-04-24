@@ -250,10 +250,10 @@ embeddings:
   semantic_gate_threshold: 0.40
 
 neo4j:
-  enabled: false
-  uri: "bolt://localhost:7687"
-  username: "USERNAME"
-  password: "PASSWORD"
+  enabled: true
+  uri: "neo4j+s://8f34c093.databases.neo4j.io"
+  username: "8f34c093"
+  password: "MuYd-3ANgT6hEc7mv6iILua6-qA10zxtIzbaVerU4Ew"
   cache_ttl_seconds: 3600
 
 technique_mapper:

@@ -2,6 +2,8 @@
 
 Near-real-time detection pipeline for **GRFICS**-style ICS/OT labs: logs flow through **Filebeat → Logstash → Elasticsearch**; the Python engine polls `ics-*` indices, applies a **two-tier** matcher (**log-source / enrichment / semantic gate** → **weighted composite score**), maps events to **MITRE ATT&CK for ICS DataComponents** using **sentence embeddings** (default **BAAI/bge-small-en-v1.5**), optionally maps to **techniques** via a **Neo4j** knowledge graph (v18 schema), **correlates** multi-stage activity (with **temporal decay** on boosts), and writes **explainable alerts** to Elasticsearch.
 
+**Optional intelligent layer** — a separate `learning/` package can sit on top of the same `ics-alerts-*` stream: a **PU alert classifier** (Layer A), **causal-window Transformer** chain attributor (Layer B), **analyst-guided triage** policy (Layer C, contextual bandit with safety rails), and **Neo4j‑grounded multi-agent LLM** mitigation reports (Layer D). It reuses the engine’s `Neo4jClient` and does not replace the deterministic detection core. See [Learning-enhanced detection](#learning-enhanced-detection).
+
 ---
 
 ## What the engine does
@@ -18,7 +20,7 @@ Near-real-time detection pipeline for **GRFICS**-style ICS/OT labs: logs flow th
 
 **Excluded by design:** events whose `asset_id` is `kali` or `caldera` (attacker/C2 simulation).
 
-For architecture, formulas, graph queries, and module details, see [`docs/ics_detection_engine_design.md`](docs/ics_detection_engine_design.md).
+For architecture, formulas, graph queries, and module details, see [`docs/ICS Detection Engine Design.md`](docs/ICS%20Detection%20Engine%20Design.md).
 
 ---
 
@@ -40,8 +42,67 @@ For architecture, formulas, graph queries, and module details, see [`docs/ics_de
 | `logstash/mitre_mapping/keyword_tagger.rb` | Populates `mitre_keyword_hits`. |
 | `docker-compose.yml` | GRFICS stack + Elasticsearch, Logstash, Kibana, Filebeat, optional **`detection-engine`** service. |
 | `scripts/generate_mitre_mapping.py` | Regenerates mapping artifacts from `datacomponents/`. |
-| `docs/ics_detection_engine_design.md` | Architecture, two-tier scoring, correlation, Neo4j, alert schema. |
+| `docs/ICS Detection Engine Design.md` | Architecture, two-tier scoring, correlation, Neo4j, alert schema. |
 | `docs/GRFICS ICS OT attack chain design with Caldera.md` | Caldera adversary chains for the lab. |
+| `docs/Learning-Component-Design-and-Implementation.md` | **Learning package:** design, data flow, modules, API, training workflows, safety. |
+| `docs/Learning-Enhanced ICS Detection and Mitigation Recommendation.md` | Feasibility study: paradigms (PU, bandit, RAG) and research rationale. |
+| `learning/` | **Optional** intelligent layer: Layer A (PU alert classifier), B (causal-window Transformer for chains/techniques), C (triage: LinUCB / optional DQN + AVAR), D (KG-grounded 4-agent LLM mitigations), `orchestrator`, `api` (FastAPI), `eval`. |
+| `config/learning.yml` | Paths, layer toggles, training hyperparameters, API host/port, Layer D safety and LLM settings. |
+| `state/learning/` (default) | Window labels (`labels.jsonl`), trained artefacts (`layer_a/`, `layer_b/`, `layer_c/`), AVAR cache, evaluation metrics. |
+| `scripts/learning/` | `smoke_pipeline.py` (end-to-end smoke test), `train_all.py`, `import_caldera.py`, `label_window.py` (CLI wrappers). |
+
+---
+
+## Learning-enhanced detection
+
+**Optional.** The **`learning/`** package augments engine alerts with **adaptive scoring**, **chain + technique attribution**, **advisory triage** (with deterministic safety rails), and **mitigation reports** retrieved from the same MITRE ATT&CK for ICS **Neo4j** graph the engine already uses. The detection engine’s polling, matching, and alerting code paths are unchanged; the learning service consumes `ics-alerts-*` and optional time-window labels.
+
+| Layer | Role |
+|-------|------|
+| **A** | Positive–unlabeled (PU) alert classifier: improves true/false-positive separation using weak window labels. |
+| **B** | Per-asset sequence model (causal-window Transformer) for attack-chain and technique/tactic prediction. |
+| **C** | Triage policy (contextual bandit; optional DQN) with **AVAR** (analyst-validated alert cache) and hard-coded accept / defer / ambiguity **safety rails**. |
+| **D** | Planner → Generator → Analyst → Reflector **multi-agent** pipeline; mitigations are **grounded in KG retrieval**, not free-generated. |
+
+**Documentation**
+
+| Document | Content |
+|----------|---------|
+| [`docs/Learning-Component-Design-and-Implementation.md`](docs/Learning-Component-Design-and-Implementation.md) | Full **design and implementation** reference: integration with the engine, data flow, modules, configuration, API, evaluation, limitations. |
+| [`docs/Learning-Enhanced ICS Detection and Mitigation Recommendation.md`](docs/Learning-Enhanced%20ICS%20Detection%20and%20Mitigation%20Recommendation.md) | Earlier **feasibility study** (why PU / bandit / RAG, literature alignment). |
+
+**Configuration:** `config/learning.yml` (override path with `LEARNING_CONFIG_PATH`). **State and labels:** under `state/learning/` by default.
+
+**Quick start**
+
+```bash
+# From repo root, after: pip install -r requirements.txt
+mkdir -p state/learning
+
+# Import a Caldera report as an under-attack time window (see Caldera Reports/)
+python3 -m learning.cli import-caldera --defender-asset plc --defender-asset hmi --pad-seconds 60
+
+# Add a benign baseline window (operator labels)
+python3 -m learning.cli add-label --start 2026-04-24T00:00:00Z --end 2026-04-24T12:00:00Z --label benign
+
+# Train (requires alerts in ics-alerts-* and matching labels; or use --fixture)
+python3 -m learning.cli train-layer-a  --es-hosts http://localhost:9200
+python3 -m learning.cli train-layer-b  --es-hosts http://localhost:9200 --engine-config config/detection.yml
+python3 -m learning.cli train-layer-c  --es-hosts http://localhost:9200
+
+# HTTP API (default host/port from config/learning.yml: 0.0.0.0:8090)
+python3 -m learning.cli serve --es-hosts http://localhost:9200
+```
+
+**Smoke test (no ES / Neo4j / LLM required for wiring check):**
+
+```bash
+python3 scripts/learning/smoke_pipeline.py
+```
+
+**API (when `serve` is running):** `GET /health`, `POST /alerts/score`, `POST /alerts/batch`, `POST /alerts/feedback` (analyst verdicts → AVAR + policy), `GET`/`POST /labels`, `POST /poll/tick` — see `learning/api.py` and the design doc.
+
+**CLI:** `python3 -m learning.cli --help` (subcommands: `import-caldera`, `add-label`, `list-labels`, `train-layer-a|b|c`, `score`, `evaluate`, `serve`).
 
 ---
 
@@ -94,7 +155,8 @@ Technique ranking uses configurable weights `technique_mapper.alpha_group` and `
 - **Elasticsearch 8.x** reachable from the machine running the engine (same host as `docker-compose` → typically `http://localhost:9200`).
 - **Indices:** populated `ics-*` events (run Filebeat + Logstash + GRFICS stack or your own pipeline that produces the same enriched fields).
 - **Python deps:** `sentence-transformers`, `torch`, `numpy` (see `requirements.txt`) for **semantic** scoring. Use `--no-embeddings` to run without loading the model (gate and scoring rely on enrichment/log-source signals; \(S_{sem}=0\)).
-- **Optional:** **Neo4j** 5.x with the MITRE ATT&CK for ICS v18 graph loaded (see the separate `MITRE-ATTACK-for-ICS-Knowledge-Graph` project).
+- **Optional (learning package):** `scikit-learn`, `xgboost` (or sklearn fallback), `fastapi`, `uvicorn`, `openai` / compatible LLM API for Layer D. Heavy pieces (`torch` for Layer B) are only needed if you train or run those layers; `python3 scripts/learning/smoke_pipeline.py` exercises the wiring with minimal services.
+- **Optional:** **Neo4j** 5.x with the MITRE ATT&CK for ICS v18 graph loaded (see the separate `MITRE-ATTACK-for-ICS-Knowledge-Graph` project). The learning Layer D retriever reuses the same graph as the engine.
 
 ---
 
@@ -137,7 +199,7 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-This installs `elasticsearch`, `PyYAML`, `python-dateutil`, `neo4j`, `numpy`, `sentence-transformers`, `torch`, etc. First run may download the embedding model (~hundreds of MB) unless already cached.
+This installs `elasticsearch`, `PyYAML`, `python-dateutil`, `neo4j`, `numpy`, `sentence-transformers`, `torch`, and — for the **learning** service — `scikit-learn`, `xgboost`, `fastapi`, `uvicorn`, `openai` (LLM; optional at runtime if using the mock agent), etc. First run may download the embedding model (~hundreds of MB) unless already cached.
 
 ### 4. Configure the engine
 
@@ -239,6 +301,7 @@ GET ics-alerts-*/_search
 - **Dedup:** In-memory dedup cache limits duplicate alerts for identical asset/source/time/message keys.
 - **Logs:** INFO lines on stderr from logger `ics-detector` (and `ics-detector.neo4j` if the graph is used).
 - **Embeddings:** First startup downloads/caches the Hugging Face model unless pre-baked (e.g. `engine/Dockerfile` build step).
+- **Learning service:** use `state/learning/` (or paths in `config/learning.yml`) for labels and models; the learning HTTP API is separate from the engine process unless you colocate them.
 
 ---
 
@@ -274,6 +337,8 @@ GET ics-alerts-*/_search
 | `engine/es_client.py` | PIT, poll, index documents. |
 | `engine/templates.py` | Index templates for alerts/correlations. |
 
+**Learning package** (separate from `python3 -m engine`): `learning/orchestrator.py` (A→B→C→D), `learning/api.py` (FastAPI), `learning/cli.py`. Full module map: *Appendix B* in [`docs/Learning-Component-Design-and-Implementation.md`](docs/Learning-Component-Design-and-Implementation.md).
+
 ---
 
 ## Attack emulation (Caldera)
@@ -286,4 +351,5 @@ Adversary YAML and abilities live under **`Caldera Attack Chains/`**. Detailed c
 
 - MITRE ATT&CK for ICS: https://attack.mitre.org/matrices/ics/
 - GRFICS-style lab: Fortiphyd [GRFICSv3](https://github.com/Fortiphyd/GRFICSv3)
-- Further reading: `docs/ics_detection_engine_design.md` (architecture diagrams, DC coverage tables, limitations).
+- Further reading: [`docs/ICS Detection Engine Design.md`](docs/ICS%20Detection%20Engine%20Design.md) (architecture diagrams, DC coverage tables, limitations).
+- Learning component: [`docs/Learning-Component-Design-and-Implementation.md`](docs/Learning-Component-Design-and-Implementation.md) (design + implementation), [`docs/Learning-Enhanced ICS Detection and Mitigation Recommendation.md`](docs/Learning-Enhanced%20ICS%20Detection%20and%20Mitigation%20Recommendation.md) (feasibility / research rationale).

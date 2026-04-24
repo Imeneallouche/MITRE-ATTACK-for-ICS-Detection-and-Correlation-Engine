@@ -6,3 +6,16 @@ neo4j>=5.19.0
 numpy>=1.24.0
 sentence-transformers>=3.0.0
 torch>=2.0.0
+
+# ── Learning-enhanced detection (`learning/` package) ──────────────────
+# Layer A — PU classifier + calibration + drift
+scikit-learn>=1.3.0
+xgboost>=2.0.0          # optional; auto-falls back to HistGradientBoosting
+joblib>=1.3.0
+# Layer C — contextual-bandit / DQN policy (torch already pinned above)
+# Layer D — multi-agent LLM mitigation pipeline
+openai>=1.12.0          # optional; mock backend used if absent
+requests>=2.31.0        # optional; needed for the ollama backend
+# Orchestrator HTTP service
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0

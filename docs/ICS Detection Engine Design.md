@@ -376,7 +376,7 @@ Elasticsearch mappings for `ics-alerts-*` include `semantic_score` (float) and `
 | **Correlation** | `engine/correlation.py` | Temporal groups, chain rules, decay |
 | **Neo4j client** | `engine/neo4j_client.py` | Bolt connection; DC→technique cache |
 | **Technique mapper** | `engine/technique_mapper.py` | DC → technique probabilities |
-| **Alerting** | `engine/alerting.py` | Alert documents and suppression |
+| **Alerting** | `engine/alerting.py` | Alert documents andr suppression |
 | **ES client** | `engine/es_client.py` | Polling, checkpoints, indexing |
 | **Templates** | `engine/templates.py` | Index templates for alerts and correlations |
 | **Container** | `engine/Dockerfile` | Optional image: Python 3.11, requirements, model pre-download |
